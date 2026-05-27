@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     id                                          VARCHAR(64),                                                                                           
     tenant_id                                   VARCHAR(1000)         NOT NULL,                                                                          
     client_reference_id                         VARCHAR(64),                                                                                           
-    project_id                                  VARCHAR(64),                                                                                           
+    project_id                                  VARCHAR(64),          NOT NULL,                                                                                         
     project_beneficiary_id                      VARCHAR(64),                                                                                           
     project_beneficiary_client_reference_id     VARCHAR(64),
     planned_start_date                          BIGINT,
@@ -88,9 +88,9 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     -- TaskResource fields (one row per resource per task)
     task_resource_id                            VARCHAR(64),
     task_resource_client_reference_id           VARCHAR(64),                                                                                           
-    product_variant_id                          VARCHAR(64),
-    quantity                                    DOUBLE PRECISION,                                                                                                
-    is_delivered                                BOOLEAN,
+    product_variant_id                          VARCHAR(64),          NOT NULL,
+    quantity                                    DOUBLE PRECISION,     NOT NULL,                                                                                                
+    is_delivered                                BOOLEAN,              NOT NULL,
     delivery_comment                            VARCHAR(1000),
                                                                                                                                                         
     -- ProjectTaskIndexV1 top-level enriched fields
