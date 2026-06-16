@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS household_enriched (
     synced_time_stamp               TIMESTAMPTZ,
     synced_time                     BIGINT,
     additional_details              JSONB
+
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS household_member_enriched (
@@ -91,6 +101,16 @@ CREATE TABLE IF NOT EXISTS household_member_enriched (
     geo_point_lon                           DOUBLE PRECISION,
     locality_code                           VARCHAR(128),
     additional_details                      JSONB
+
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS project_beneficiary_enriched (
@@ -132,6 +152,17 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_enriched (
     synced_date                             DATE,
     synced_time_stamp                       TIMESTAMPTZ,
     additional_details                      JSONB
+
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
+
 );
 
 CREATE TABLE IF NOT EXISTS attendance_log_enriched (
@@ -169,6 +200,15 @@ CREATE TABLE IF NOT EXISTS attendance_log_enriched (
     boundary_hierarchy                      JSONB,
     boundary_hierarchy_code                 JSONB,
     additional_details                      JSONB
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS attendance_register_enriched (
@@ -197,6 +237,15 @@ CREATE TABLE IF NOT EXISTS attendance_register_enriched (
     -- AttendanceRegisterIndexV1 top-level fields
     attendees_info                          JSONB,
     transformer_time_stamp                  TIMESTAMPTZ
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
@@ -250,6 +299,16 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
     task_dates                              DATE,
     locality_code                           VARCHAR(128),
     additional_details                      JSONB
+
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS project_staff_enriched (
@@ -289,6 +348,7 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
     -- ==========================================
+    project_id                      VARCHAR(64),    
     project_type                    VARCHAR(64),
     project_type_id                 VARCHAR(64),
     project_name                    VARCHAR(256),
@@ -330,7 +390,16 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     boundary_hierarchy              JSONB,
     boundary_hierarchy_code         JSONB,
     additional_details              JSONB,
-    locality_code                   VARCHAR(256)
+    locality_code                   VARCHAR(256),
+    -- ==========================================
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    -- ==========================================
+    project_id                      VARCHAR(64),    
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 
