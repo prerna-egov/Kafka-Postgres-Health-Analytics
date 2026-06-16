@@ -289,7 +289,6 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
     -- ==========================================
-    en_project_id                   VARCHAR(64),    -- Renamed to prevent conflict with upstream project_id
     project_type                    VARCHAR(64),
     project_type_id                 VARCHAR(64),
     project_name                    VARCHAR(256),
@@ -525,7 +524,6 @@ CREATE TABLE IF NOT EXISTS hf_referral_enriched (
 -- ==========================================
 -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
 -- ==========================================
-    en_project_id                       VARCHAR(64),    -- Prefixed to avoid column name collision with upstream project_id
     project_type                        VARCHAR(64),
     project_type_id                     VARCHAR(64),
     project_name                        VARCHAR(256),
@@ -743,63 +741,43 @@ CREATE TABLE IF NOT EXISTS muster_roll_enriched (
 
 CREATE TABLE IF NOT EXISTS stock_enriched (
     -- ==========================================
-    -- UPSTREAM FIELDS (From Stock.java)
-    -- ==========================================
-    id                              VARCHAR(64)     PRIMARY KEY,
-    client_reference_id             VARCHAR(64),
-    tenant_id                       VARCHAR(1000)   NOT NULL,
-    facility_id                     VARCHAR(64)     NOT NULL,
-    product_variant_id              VARCHAR(64),
-    quantity                        INTEGER,
-    reference_id                    VARCHAR(64),
-    reference_id_type               VARCHAR(64),
-    transaction_type                VARCHAR(64),
-    transaction_reason              VARCHAR(64),
-    transacting_party_id            VARCHAR(64),
-    transacting_party_type          VARCHAR(64),
-    waybill_number                  VARCHAR(200),
-    additional_fields               JSONB,
-    is_deleted                      BOOLEAN         DEFAULT FALSE,
-    row_version                     INTEGER,
-    date_of_entry                   BIGINT,
-
-    -- Upstream Audit Details
-    created_by                      VARCHAR(64),
-    last_modified_by                VARCHAR(64),
-    created_time                    BIGINT,
-    last_modified_time              BIGINT,
-    client_created_by               VARCHAR(64),
-    client_last_modified_by         VARCHAR(64),
-    client_created_time             BIGINT,
-    client_last_modified_time       BIGINT,
-
-    -- ==========================================
     -- DOWNSTREAM FIELDS (From StockIndexV1.java)
     -- ==========================================
-    transacting_facility_id         VARCHAR(64),
-    facility_name                   VARCHAR(256),
-    transacting_facility_name       VARCHAR(256),
-    product_variant                 VARCHAR(64),
-    product_name                    VARCHAR(256),
-    physical_count                  INTEGER,
-    event_type                      VARCHAR(64),
-    reason                          VARCHAR(64),
-    user_name                       VARCHAR(180),
-    name_of_user                    VARCHAR(250),
-    role                            VARCHAR(128),
-    user_address                    VARCHAR(440),
-    boundary_hierarchy              JSONB,
-    boundary_hierarchy_code         JSONB,
-    synced_time_stamp               VARCHAR(128),
-    synced_time                     BIGINT,
-    facility_type                   VARCHAR(64),
-    transacting_facility_type       VARCHAR(64),
-    facility_level                  VARCHAR(64),
-    transacting_facility_level      VARCHAR(64),
-    facility_target                 BIGINT,
-    task_dates                      VARCHAR(128),
-    synced_date                     VARCHAR(128),
-    additional_details              JSONB,
+    id                                VARCHAR(64),
+    facility_id                       VARCHAR(64),
+    transacting_facility_id           VARCHAR(64),
+    facility_name                     VARCHAR(256),
+    transacting_facility_name         VARCHAR(256),
+    product_variant                   VARCHAR(64),
+    product_name                      VARCHAR(256),
+    physical_count                    INTEGER,
+    event_type                        VARCHAR(64),
+    reason                            VARCHAR(64),
+    user_name                         VARCHAR(180),
+    name_of_user                      VARCHAR(250),
+    role                              VARCHAR(128),
+    user_address                      VARCHAR(440),
+    date_of_entry                     BIGINT,
+    boundary_hierarchy                JSONB,
+    boundary_hierarchy_code           JSONB,
+    created_by                        VARCHAR(256),
+    last_modified_by                  VARCHAR(256),
+    created_time                      BIGINT,
+    last_modified_time                BIGINT,
+    synced_time_stamp                 VARCHAR(128),
+    synced_time                       BIGINT,
+    additional_fields                 JSONB,
+    client_reference_id               VARCHAR(128),
+    tenant_id                         VARCHAR(128),
+    facility_type                     VARCHAR(64),
+    transacting_facility_type         VARCHAR(64),
+    facility_level                    VARCHAR(64),
+    transacting_facility_level        VARCHAR(64),
+    facility_target                   BIGINT,
+    task_dates                        VARCHAR(128),
+    synced_date                       VARCHAR(128),
+    additional_details                JSONB,
+    waybill_number                    VARCHAR(128)
 
     -- ==========================================
     -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -857,51 +835,39 @@ CREATE TABLE IF NOT EXISTS attendance_staff_enriched (
 );
 
 CREATE TABLE IF NOT EXISTS service_task_enriched (
-    -- ==========================================
-    -- Core Service Fields (Upstream intersection)
-    -- ==========================================
-    id                              VARCHAR(64)     PRIMARY KEY,
-    tenant_id                       VARCHAR(1000)   NOT NULL,
-    service_code                    VARCHAR(128),
-    service_definition_id           VARCHAR(64),
-    service_request_id              VARCHAR(128),
-    description                     TEXT,
-    account_id                      VARCHAR(64),
-    rating                          INTEGER,
-    application_status              VARCHAR(128),
-    source                          VARCHAR(64),
-    active                          BOOLEAN         DEFAULT TRUE,
-    self_complaint                  BOOLEAN,
+    id VARCHAR(255) PRIMARY KEY,
 
-    -- Complex objects
-    address                         JSONB,
-    attributes                      JSONB,          -- Mapped from List<AttributeValue>
+    created_time BIGINT,
+    created_by VARCHAR(255),
 
--- Expanded AuditDetails
-    created_by                      VARCHAR(64),
-    last_modified_by                VARCHAR(64),
-    created_time                    BIGINT,
-    last_modified_time              BIGINT,
+    supervisor_level VARCHAR(255),
+    checklist_name VARCHAR(255),
+    service_definition_id VARCHAR(255),
 
-    -- ==========================================
-    -- Fields from ServiceIndexV1.java
-    -- (Skipping overlapping core fields)
-    -- ==========================================
-    supervisor_level                VARCHAR(128),
-    checklist_name                  VARCHAR(256),
-    user_name                       VARCHAR(180),
-    name_of_user                    VARCHAR(250),
-    role                            VARCHAR(128),
-    user_address                    VARCHAR(440),
-    boundary_hierarchy              JSONB,          -- Mapped from Map<String, String>
-    boundary_hierarchy_code         JSONB,          -- Mapped from Map<String, String>
-    user_id                         VARCHAR(64),    -- Re-mapped from accountId in transformer
-    client_reference_id             VARCHAR(64),
-    synced_time_stamp               VARCHAR(128),   -- Stored as String per Java model
-    synced_time                     BIGINT,
-    task_dates                      VARCHAR(128),   -- Stored as String per Java model
-    additional_details              JSONB,          -- Mapped from ObjectNode
-    geo_point                       JSONB,          -- Mapped from List<Double> [lat, lon]
+    user_name VARCHAR(255),
+    name_of_user VARCHAR(255),
+    role VARCHAR(255),
+    user_address TEXT,
+
+    boundary_hierarchy JSONB,
+    boundary_hierarchy_code JSONB,
+
+    tenant_id VARCHAR(255),
+    user_id VARCHAR(255),
+
+    attributes JSONB,
+
+    client_reference_id VARCHAR(255),
+
+    synced_time_stamp VARCHAR(255),
+    synced_time BIGINT,
+
+    task_dates VARCHAR(255),
+
+    additional_details JSONB,
+
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION
 
 -- ==========================================
     -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -1127,53 +1093,48 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     -- PRIMARY KEY
     -- ==========================================
     id                              VARCHAR(128)    PRIMARY KEY,
+
     -- ==========================================
-    -- CORE UPSTREAM FIELDS: From Project.java
+    -- CORE METADATA & IDENTIFIERS
     -- ==========================================
     tenant_id                       VARCHAR(1000)   NOT NULL,
     project_number                  VARCHAR(64),
-    project_sub_type                VARCHAR(64),
-    department                      VARCHAR(64),
-    description                     TEXT,
     reference_id                    VARCHAR(128),
-    start_date                      BIGINT,
-    end_date                        BIGINT,
-    is_task_enabled                 BOOLEAN         DEFAULT FALSE,
-    parent                          VARCHAR(64),
-    project_hierarchy               VARCHAR(128),
-    nature_of_work                  VARCHAR(128),
-    is_deleted                      BOOLEAN         DEFAULT FALSE,
-    row_version                     INTEGER,
-
-    -- Audit Details (Expanded)
     created_by                      VARCHAR(64),
-    last_modified_by                VARCHAR(64),
     created_time                    BIGINT,
-    last_modified_time              BIGINT,
 
-    -- Raw Data Containers
-    raw_targets                     JSONB,          -- List<Target>
-    raw_documents                   JSONB,          -- List<Document>
-    additional_details_upstream     JSONB,          -- Project.additionalDetails
-
--- ==========================================
--- ENRICHED DOWNSTREAM FIELDS: From ProjectIndexV1.java
--- ==========================================
+    -- ==========================================
+    -- ENRICHED DOWNSTREAM METRICS
+    -- ==========================================
     project_beneficiary_type        VARCHAR(128),
+    sub_project_type                VARCHAR(128),
     overall_target                  INTEGER,
     target_per_day                  INTEGER,
     campaign_duration_in_days       INTEGER,
+    start_date                      BIGINT,
+    end_date                        BIGINT,
     product_variant                 VARCHAR(256),
     product_name                    VARCHAR(256),
     target_type                     VARCHAR(128),
     locality_code                   VARCHAR(128),
-    sub_project_type                VARCHAR(128),
 
-    -- Enriched Data Containers
-    boundary_hierarchy              JSONB,          -- Map<String, String>
-    boundary_hierarchy_code         JSONB,          -- Map<String, String>
-    task_dates                      JSONB,          -- List<String>
-    additional_details_downstream   JSONB           -- JsonNode
+    -- ==========================================
+    -- COMPLEX JSONB MAPPINGS (Arrays & Objects)
+    -- ==========================================
+    boundary_hierarchy              JSONB,          -- Downstream Map<String, String>
+    boundary_hierarchy_code         JSONB,          -- Downstream Map<String, String>
+    task_dates                      JSONB,          -- Downstream List<String>
+    additional_details              JSONB,          -- Downstream JsonNode
+
+    -- ==========================================
+    -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
+    -- ==========================================
+    project_id                      VARCHAR(64),
+    project_type                    VARCHAR(64),
+    project_type_id                 VARCHAR(64),
+    project_name                    VARCHAR(256),
+    campaign_number                 VARCHAR(128),
+    campaign_id                     VARCHAR(128)
 );
 
 
@@ -1221,255 +1182,7 @@ CREATE TABLE IF NOT EXISTS bill_report_enriched (
     campaign_id                     VARCHAR(128)
 );
 
-CREATE TABLE IF NOT EXISTS service_task_enriched (
 
-    -- ==========================================
-    -- CORE UPSTREAM FIELDS: From Service.java
-    -- ==========================================
-    id                              VARCHAR(64)     PRIMARY KEY,
-    tenant_id                       VARCHAR(1000)   NOT NULL,
-    service_def_id                  VARCHAR(64),
-    reference_id                    VARCHAR(128),
-    account_id                      VARCHAR(64),
-    client_id                       VARCHAR(64),
-
-    -- Expanded AuditDetails
-    created_by                      VARCHAR(64),
-    last_modified_by                VARCHAR(64),
-    created_time                    BIGINT,
-    last_modified_time              BIGINT,
-
-    -- Complex Objects (Mapped to JSONB for flexibility)
-    raw_attributes                  JSONB,          -- Mapped from List<AttributeValue>
-    additional_details_upstream     JSONB,          -- From Service.additionalDetails
-    additional_fields               JSONB,          -- From Service.additionalFields
-
--- ==========================================
--- ENRICHED DOWNSTREAM FIELDS: From ServiceIndexV1.java
--- ==========================================
-    client_reference_id             VARCHAR(64),
-    supervisor_level                VARCHAR(128),
-    checklist_name                  VARCHAR(256),
-
-    -- User Enrichment
-    user_name                       VARCHAR(180),
-    name_of_user                    VARCHAR(250),
-    role                            VARCHAR(128),
-    user_address                    VARCHAR(440),
-    user_id                         VARCHAR(64),
-
-    -- Sync & Meta
-    synced_time                     BIGINT,
-    synced_time_stamp               VARCHAR(128),
-    task_dates                      VARCHAR(128),
-
-    -- JSONB Mappings
-    boundary_hierarchy              JSONB,          -- Map<String, String>
-    boundary_hierarchy_code         JSONB,          -- Map<String, String>
-    additional_details_downstream   JSONB,          -- ObjectNode (contains cycleIndex)
-    geo_point                       JSONB,          -- Array [lat, lon]
-
--- ==========================================
-    -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
--- ==========================================
-    project_id                      VARCHAR(64),
-    project_type                    VARCHAR(64),
-    project_type_id                 VARCHAR(64),
-    project_name                    VARCHAR(256),
-    campaign_number                 VARCHAR(128),
-    campaign_id                     VARCHAR(128)
-);
-
-
-CREATE TABLE IF NOT EXISTS hf_referral_enriched (
-    -- ==========================================
-    -- CORE UPSTREAM FIELDS: From HFReferral.java
-    -- ==========================================
-    id                                  VARCHAR(64)     PRIMARY KEY,
-    client_reference_id                 VARCHAR(64),
-    tenant_id                           VARCHAR(1000)   NOT NULL,
-    project_id                          VARCHAR(64),
-    project_facility_id                 VARCHAR(64),
-    symptom                             VARCHAR(256)    NOT NULL,
-    symptom_survey_id                   VARCHAR(100),
-    beneficiary_id                      VARCHAR(100),
-    referral_code                       VARCHAR(100),
-    national_level_id                   VARCHAR(100),
-    is_deleted                          BOOLEAN         DEFAULT FALSE,
-    row_version                         INTEGER,
-    additional_fields                   JSONB,
-
-    -- Expanded AuditDetails (Server-side)
-    created_by                          VARCHAR(64),
-    last_modified_by                    VARCHAR(64),
-    created_time                        BIGINT,
-    last_modified_time                  BIGINT,
-
-    -- Expanded AuditDetails (Client-side / Device)
-    client_created_by                   VARCHAR(64),
-    client_last_modified_by             VARCHAR(64),
-    client_created_time                 BIGINT,
-    client_last_modified_time           BIGINT,
-
-    -- ==========================================
-    -- ENRICHED DOWNSTREAM FIELDS: From HfReferralIndexV1.java
-    -- ==========================================
-    user_name                           VARCHAR(180),
-    role                                VARCHAR(128),
-    user_address                        VARCHAR(440),
-
-    -- Geography Hierarchy
-    boundary_hierarchy                  JSONB,          -- Mapped from Map<String, String>
-    boundary_hierarchy_code             JSONB,          -- Mapped from Map<String, String>
-
-    -- Sync Metadata & Custom Details
-    task_dates                          VARCHAR(128),   -- Stored as String per Java model
-    synced_date                         VARCHAR(128),   -- Stored as String per Java model
-    additional_details                  JSONB           -- Mapped from ObjectNode (contains cycleIndex)
-
-    -- ==========================================
-    --Extra fields used by the transformer for transformation
-    -- ==========================================
-    project_type                        VARCHAR(128),
-    project_type_id                     VARCHAR(128),
-    project_name                        VARCHAR(256),
-    campaign_number                     VARCHAR(128),   -- Mapped from project.getReferenceID()
-    campaign_id                         VARCHAR(128),
-);
-
-
-CREATE TABLE IF NOT EXISTS referral_service_task_enriched (
-    -- ==========================================
-    -- ROOT IDENTIFIERS
-    -- ==========================================
-    -- WARNING: Due to the transformer bug, consider making (id, age_group) a composite primary key 
-    -- or fixing the Java code, otherwise records will overwrite each other.
-    id                              VARCHAR(128)    PRIMARY KEY, 
-    tenant_id                       VARCHAR(1000)   NOT NULL,
-    
-    -- ==========================================
-    -- DOWNSTREAM FIELDS (From ReferralServiceTaskIndexV1.java)
-    -- ==========================================
-    supervisor_level                VARCHAR(128),
-    checklist_name                  VARCHAR(256),
-    age_group                       VARCHAR(64),
-    
-    -- User Enrichment
-    user_name                       VARCHAR(180),
-    role                            VARCHAR(128),
-    user_address                    VARCHAR(440),
-    
-    -- Telemetry & Sync
-    created_by                      VARCHAR(64),
-    created_time                    BIGINT,
-    synced_time                     BIGINT,
-    task_dates                      VARCHAR(128),   -- Stored as String per Java model
-    synced_time_stamp               VARCHAR(128),   -- Stored as String per Java model
-    
-    -- Dynamic Map / Questionnaire Fields (Stored as JSONB because Java type is 'Object')
-    children_presented_us           JSONB,
-    malaria_positive_us             JSONB,
-    malaria_negative_us             JSONB,
-    children_presented_ape          JSONB,
-    malaria_positive_ape            JSONB,
-    malaria_negative_ape            JSONB,
-
-    -- Complex JSONB Data
-    boundary_hierarchy              JSONB,
-    boundary_hierarchy_code         JSONB,
-    additional_details              JSONB,
-
-    -- ==========================================
-    --Extra fields used by the transformer for transformation
-    -- ==========================================
-    project_id                      VARCHAR(64),
-    project_type                    VARCHAR(64),
-    project_type_id                 VARCHAR(64),
-    project_name                    VARCHAR(256),
-    campaign_number                 VARCHAR(128),
-    campaign_id                     VARCHAR(128),
-
-    -- ====================================================================
-    -- GHOST FIELDS (UPSTREAM ONLY)
-    -- Because there is no wrapper object, these upstream Service.java fields 
-    -- are dropped by the transformer and will insert as NULL.
-    -- ====================================================================
-    service_def_id                  VARCHAR(64),
-    reference_id                    VARCHAR(64),
-    account_id                      VARCHAR(64),
-    client_id                       VARCHAR(64),
-    attributes                      JSONB,          -- Upstream List<AttributeValue>
-    last_modified_by                VARCHAR(64),
-    last_modified_time              BIGINT
-);
-
-
-CREATE TABLE IF NOT EXISTS referral_enriched (
-    -- ==========================================
-    -- UPSTREAM FIELDS (From Referral.java)
-    -- (Nested under "referral" in JSON, requires SMT Flattening)
-    -- ==========================================
-    id                                          VARCHAR(64)     PRIMARY KEY,
-    client_reference_id                         VARCHAR(64),
-    project_beneficiary_id                      VARCHAR(64),
-    project_beneficiary_client_reference_id     VARCHAR(64),
-    referrer_id                                 VARCHAR(64),
-    recipient_type                              VARCHAR(64),
-    recipient_id                                VARCHAR(64),
-    
-    -- Complex Objects
-    reasons                                     JSONB           NOT NULL, -- Mapped from List<String>
-    side_effect                                 JSONB,                    -- TODO : Keep it as JSON object or as a seperate table 
-    additional_fields                           JSONB,
-    
-    tenant_id                                   VARCHAR(1000)   NOT NULL,
-    is_deleted                                  BOOLEAN         DEFAULT FALSE,
-    row_version                                 INTEGER,
-
-    -- Upstream Audit Details (Server)
-    created_by                                  VARCHAR(64),
-    last_modified_by                            VARCHAR(64),
-    created_time                                BIGINT,
-    last_modified_time                          BIGINT,
-
-    -- Upstream Audit Details (Client)
-    client_created_by                           VARCHAR(64),
-    client_last_modified_by                     VARCHAR(64),
-    client_created_time                         BIGINT,
-    client_last_modified_time                   BIGINT,
-
-    -- ==========================================
-    -- DOWNSTREAM FIELDS (From ReferralIndexV1.java)
-    -- ==========================================
-    date_of_birth                               BIGINT,
-    age                                         INTEGER,
-    user_name                                   VARCHAR(180),
-    name_of_user                                VARCHAR(250),
-    role                                        VARCHAR(128),
-    user_address                                VARCHAR(440),
-    gender                                      VARCHAR(64),
-    individual_id                               VARCHAR(64),
-    facility_name                               VARCHAR(256),
-    
-    -- Sync & Telemetry
-    task_dates                                  VARCHAR(128),   -- Stored as String per Java model
-    synced_date                                 VARCHAR(128),   -- Stored as String per Java model
-    
-    -- Complex Downstream JSONB
-    boundary_hierarchy                          JSONB,          -- Mapped from Map<String, String>
-    boundary_hierarchy_code                     JSONB,          -- Mapped from Map<String, String>
-    additional_details                          JSONB,          -- Mapped from ObjectNode
-
-    -- ==========================================
-    --Extra fields used by the transformer for transformation
-    -- ==========================================
-    project_id                                  VARCHAR(64),
-    project_type                                VARCHAR(64),
-    project_type_id                             VARCHAR(64),
-    project_name                                VARCHAR(256),
-    campaign_number                             VARCHAR(128),
-    campaign_id                                 VARCHAR(128)
-);
 
 
 
@@ -1523,9 +1236,10 @@ CREATE TABLE IF NOT EXISTS user_action_enriched (
     synced_time                     BIGINT,
     task_dates                      VARCHAR(128),
     synced_date                     VARCHAR(128),
-
+    --GeoPoint in expanded form 
+    geo_latitude                    DOUBLE PRECISION,
+    geo_longitude                   DOUBLE PRECISION,
     -- Complex JSONB Arrays & Objects
-    geo_point                       JSONB,          -- Mapped from Double[] [lon, lat]
     boundary_hierarchy              JSONB,          -- Mapped from Map<String, String>
     boundary_hierarchy_code         JSONB,          -- Mapped from Map<String, String>
     additional_details              JSONB,          -- Mapped from ObjectNode (parsed fields)
@@ -1542,71 +1256,81 @@ CREATE TABLE IF NOT EXISTS user_action_enriched (
 
 CREATE TABLE IF NOT EXISTS project_task_enriched (
     -- ==========================================
-    -- PRIMARY KEY (Exploded from TaskResource)
+    -- PRIMARY KEY
     -- ==========================================
-    -- Note: Because 1 Task can have multiple resources, the PK is the TaskResource ID, not the Task ID.
     id                                      VARCHAR(128)    PRIMARY KEY,
 
     -- ==========================================
-    -- MAIN CLASS FIELDS (Mapped from Task.java)
+    -- CORE TASK IDENTIFIERS & METADATA
     -- ==========================================
-    tenant_id                               VARCHAR(1000)   NOT NULL,
-    task_id                                 VARCHAR(64),    -- Mapped from task.getId()
-    task_client_reference_id                VARCHAR(64),    -- Mapped from task.getClientReferenceId()
-    project_beneficiary_client_reference_id VARCHAR(64),
+    task_id                                 VARCHAR(64),
+    task_type                               VARCHAR(64),
     status                                  VARCHAR(64),
-    administration_status                   VARCHAR(64),    -- Duplicated from task.getStatus()
+    tenant_id                               VARCHAR(1000)   NOT NULL,
+    administration_status                   VARCHAR(64),
 
-    -- Address Extraction
-    latitude                                DOUBLE PRECISION,
-    longitude                               DOUBLE PRECISION,
-    location_accuracy                       DOUBLE PRECISION,
-    locality_code                           VARCHAR(256),
-    geo_point                               JSONB,          -- Array [lon, lat]
+    -- Reference IDs
+    client_reference_id                     VARCHAR(64),
+    task_client_reference_id                VARCHAR(64),
+    project_beneficiary_client_reference_id VARCHAR(64),
 
-    -- Audit Details Extraction
+    -- ==========================================
+    -- AUDIT DETAILS
+    -- ==========================================
     created_by                              VARCHAR(64),
     last_modified_by                        VARCHAR(64),
     created_time                            BIGINT,
     last_modified_time                      BIGINT,
 
     -- ==========================================
-    -- ENRICHED CLASS FIELDS (From ProjectTaskIndexV1.java)
+    -- DELIVERY & PRODUCT METRICS
     -- ==========================================
-    client_reference_id                     VARCHAR(64),    -- From TaskResource
-    task_type                               VARCHAR(64),    -- Hardcoded to "DELIVERY"
     product_variant                         VARCHAR(64),
-    product_name                            VARCHAR(256),   -- Joined String of product names
+    product_name                            VARCHAR(256),
     quantity                                BIGINT,
-    delivered_to                            VARCHAR(128),   -- e.g., "HOUSEHOLD" or "INDIVIDUAL"
+    delivered_to                            VARCHAR(128),
     is_delivered                            BOOLEAN,
     delivery_comments                       TEXT,
 
-    -- Beneficiary Demographics (from Individual/Household lookups)
+    -- ==========================================
+    -- BENEFICIARY DEMOGRAPHICS
+    -- ==========================================
     household_id                            VARCHAR(64),
     member_count                            INTEGER,
     individual_id                           VARCHAR(64),
     date_of_birth                           BIGINT,
 
-    -- User Demographics
+    -- ==========================================
+    -- USER DEMOGRAPHICS
+    -- ==========================================
     user_name                               VARCHAR(180),
     name_of_user                            VARCHAR(250),
     role                                    VARCHAR(128),
     user_address                            VARCHAR(440),
 
-    -- Geographical Hierarchy Maps
-    boundary_hierarchy                      JSONB,
-    boundary_hierarchy_code                 JSONB,
+    -- ==========================================
+    -- GEOGRAPHY & LOCATION
+    -- ==========================================
+    latitude                                DOUBLE PRECISION,
+    longitude                               DOUBLE PRECISION,
+    location_accuracy                       DOUBLE PRECISION,
+    locality_code                           VARCHAR(256),
+    geo_point                               JSONB,          -- List<Double> Array [lon, lat]
+    boundary_hierarchy                      JSONB,          -- Map<String, String>
+    boundary_hierarchy_code                 JSONB,          -- Map<String, String>
 
-    -- Sync Telemetry
-    synced_time_stamp                       VARCHAR(128),   -- Stored as String per Java model
-    synced_date                             VARCHAR(128),   -- Stored as String per Java model
+    -- ==========================================
+    -- SYNC TELEMETRY
+    -- ==========================================
+    synced_time_stamp                       VARCHAR(128),
+    synced_date                             VARCHAR(128),
     synced_time                             BIGINT,
-    task_dates                              VARCHAR(128),   -- Stored as String per Java model
+    task_dates                              VARCHAR(128),
 
-    -- Highly Enriched JSON Node
-    -- (Contains cycleIndex, vulnerability flags, wasted quantity, refusal reasons, etc.)
-    additional_details                      JSONB,          
+    -- ==========================================
+    -- DYNAMIC EXTENSIONS
+    -- ==========================================
+    additional_details                      JSONB,          -- ObjectNode
 
     -- ==========================================
     -- EXTRA FIELDS (Inherited via ProjectInfo)
@@ -1616,19 +1340,5 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     project_type_id                         VARCHAR(64),
     project_name                            VARCHAR(256),
     campaign_number                         VARCHAR(128),
-    campaign_id                             VARCHAR(128),
-
-    -- ====================================================================
-    -- GHOST FIELDS (UPSTREAM ONLY - NOT IN KAFKA PAYLOAD)
-    -- Because the transformer explicitly maps fields to a flat structure, 
-    -- the following Task.java fields are dropped and will always insert as NULL.
-    -- ====================================================================
-    project_beneficiary_id                  VARCHAR(64),
-    planned_start_date                      BIGINT,
-    planned_end_date                        BIGINT,
-    actual_start_date                       BIGINT,
-    actual_end_date                         BIGINT,
-    created_date                            BIGINT,
-    is_deleted                              BOOLEAN,
-    row_version                             INTEGER
+    campaign_id                             VARCHAR(128)
 );
