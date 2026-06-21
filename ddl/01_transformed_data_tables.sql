@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS household_enriched (
     user_address                    VARCHAR(440),
 
     -- Stored as Strings per Java model
-    task_dates                      VARCHAR(128),
-    synced_date                     VARCHAR(128),
-    synced_time_stamp               VARCHAR(128),
+    task_dates                      DATE,
+    synced_date                     DATE,
+    synced_time_stamp               TIMESTAMPTZ,
 
     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
@@ -459,8 +459,8 @@ CREATE TABLE IF NOT EXISTS referral_enriched (
     facility_name                               VARCHAR(256),
     individual_id                               VARCHAR(64),
     gender                                      VARCHAR(64),
-    task_dates                                  VARCHAR(128),
-    synced_date                                 VARCHAR(128),
+    task_dates                                  DATE,
+    synced_date                                 DATE,
     additional_details                          JSONB,
 
     -- ==========================================
@@ -509,8 +509,8 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     village_code                    VARCHAR(128),
 
 
-    task_dates                      VARCHAR(128),             -- Stored as String per Java model
-    synced_date                     VARCHAR(128),             -- Stored as String per Java model
+    task_dates                      DATE,             -- Stored as String per Java model
+    synced_date                     DATE,             -- Stored as String per Java model
 
 -- ==========================================
 -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -557,8 +557,8 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     village_code                    VARCHAR(128),
 
 
-    task_dates                      VARCHAR(128),             -- Stored as String per Java model
-    synced_date                     VARCHAR(128),             -- Stored as String per Java model
+    task_dates                      DATE,             -- Stored as String per Java model
+    synced_date                     DATE,             -- Stored as String per Java model
 
 -- ==========================================
 -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -618,8 +618,8 @@ CREATE TABLE IF NOT EXISTS hf_referral_enriched (
     district_code                   VARCHAR(128),
     village_code                    VARCHAR(128),
 
-    task_dates                          VARCHAR(128),   -- Stored as String per Java model
-    synced_date                         VARCHAR(128),   -- Stored as String per Java model
+    task_dates                          DATE,   -- Stored as String per Java model
+    synced_date                         DATE,   -- Stored as String per Java model
     additional_details                  JSONB,          -- Mapped from ObjectNode
 
 -- ==========================================
@@ -797,8 +797,8 @@ CREATE TABLE IF NOT EXISTS side_effect_enriched (
     name_of_user                                VARCHAR(250),
     role                                        VARCHAR(128),
     user_address                                VARCHAR(440),
-    task_dates                                  VARCHAR(128),
-    synced_date                                 VARCHAR(128),
+    task_dates                                  DATE,
+    synced_date                                 DATE,
     additional_details                          JSONB,
 
     -- ==========================================
@@ -901,7 +901,7 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     last_modified_by                  VARCHAR(256),
     created_time                      BIGINT,
     last_modified_time                BIGINT,
-    synced_time_stamp                 VARCHAR(128),
+    synced_time_stamp                 TIMESTAMPTZ,
     synced_time                       BIGINT,
     additional_fields                 JSONB,
     client_reference_id               VARCHAR(128),
@@ -911,8 +911,8 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     facility_level                    VARCHAR(64),
     transacting_facility_level        VARCHAR(64),
     facility_target                   BIGINT,
-    task_dates                        VARCHAR(128),
-    synced_date                       VARCHAR(128),
+    task_dates                        DATE,
+    synced_date                       DATE,
     additional_details                JSONB,
     waybill_number                    VARCHAR(128)
 
@@ -1010,10 +1010,10 @@ CREATE TABLE IF NOT EXISTS service_task_enriched (
 
     client_reference_id VARCHAR(255),
 
-    synced_time_stamp VARCHAR(255),
+    synced_time_stamp TIMESTAMPTZ,
     synced_time BIGINT,
 
-    task_dates VARCHAR(255),
+    task_dates DATE,
 
     additional_details JSONB,
 
@@ -1148,10 +1148,10 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
     user_address                    VARCHAR(440),
 
     -- Sync Telemetry
-    synced_time_stamp               VARCHAR(128),
+    synced_time_stamp               TIMESTAMPTZ,
     synced_time                     BIGINT,
-    task_dates                      VARCHAR(128),
-    synced_date                     VARCHAR(128),
+    task_dates                      DATE,
+    synced_date                     DATE,
 
     -- Hierarchy & Location mappings
 
@@ -1216,8 +1216,8 @@ CREATE TABLE IF NOT EXISTS referral_service_task_enriched (
 
     -- Sync Telemetry
     synced_time                     BIGINT,
-    synced_time_stamp               VARCHAR(128),
-    task_dates                      VARCHAR(128),
+    synced_time_stamp               TIMESTAMPTZ,
+    task_dates                      DATE,
 
     -- Malaria Questionnaire Metrics
     children_presented_us           VARCHAR(256),
@@ -1417,10 +1417,10 @@ CREATE TABLE IF NOT EXISTS user_action_enriched (
     role                            VARCHAR(128),
 
     -- Sync & Telemetry
-    synced_time_stamp               VARCHAR(128),
+    synced_time_stamp               TIMESTAMPTZ,
     synced_time                     BIGINT,
-    task_dates                      VARCHAR(128),
-    synced_date                     VARCHAR(128),
+    task_dates                      DATE,
+    synced_date                     DATE,
     --GeoPoint in expanded form
     geo_latitude                    DOUBLE PRECISION,
     geo_longitude                   DOUBLE PRECISION,
@@ -1521,10 +1521,10 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     -- ==========================================
 -- SYNC TELEMETRY
 -- ==========================================
-    synced_time_stamp                       VARCHAR(128),
-    synced_date                             VARCHAR(128),
+    synced_time_stamp                       TIMESTAMPTZ,
+    synced_date                             DATE,
     synced_time                             BIGINT,
-    task_dates                              VARCHAR(128),
+    task_dates                              DATE,
 
     -- ==========================================
     -- DYNAMIC EXTENSIONS
