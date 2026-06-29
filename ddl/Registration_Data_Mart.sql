@@ -20,53 +20,78 @@
 -- JSONB field extractions are done here so marts use native typed columns.
 -- #############################################################################
 
-CREATE MATERIALIZED VIEW v_beneficiary_task_joined AS
+-- TIER 1: Beneficiary Level Base Mart
+CREATE MATERIALIZED VIEW dm_registration_beneficiary_base AS
 SELECT
-    -- Beneficiary identifiers
-    pb.beneficiary_id                                       AS enumeration_record_id,
-    pb.client_reference_id                                  AS pb_client_reference_id,
-    pb.project_id,
+    pb.beneficiary_id,
+    MAX(pb.client_reference_id) AS client_reference_id,
     pb.campaign_id,
-
-    -- Extracted beneficiary attributes (from JSONB)
-    (pb.beneficiary_additional_fields->>'ageMonths')::NUMERIC   AS age_months,
-    pb.beneficiary_additional_fields->>'settlementType'         AS settlement_type,
-    pb.additional_details->>'gender'                            AS gender,
-    pb.additional_details->>'guestMember'                       AS guest_member,
-
-    -- Boundary hierarchy from beneficiary
+    (pb.beneficiary_additional_fields->>'ageMonths')::NUMERIC AS age_months,
+    pb.beneficiary_additional_fields->>'settlementType' AS settlement_type,
+    pb.additional_details->>'gender' AS gender,
+    pb.additional_details->>'guestMember' AS guest_member,
     pb.country_code,
     pb.province_code,
     pb.district_code,
     pb.spp_code,
     pb.health_center_code,
     pb.village_code,
-
-    -- Task (vaccination/delivery) attributes
-    pt.id                                                       AS task_id,
-    pt.administration_status,
-    CASE WHEN pt.administration_status = 'SUCCESS' THEN 1 ELSE 0 END AS is_vaccinated,
-    
-    pt.additional_details->>'receivedOPVBefore'                 AS received_opv_before,
-    NULLIF(TRIM(pt.additional_details->>'ageInMonths'), '')::NUMERIC AS task_age_months,
-
-    -- Delivery flag
-    CASE WHEN pt.id IS NOT NULL AND pt.administration_status = 'SUCCESS'
-         THEN 1 ELSE 0 END                                     AS has_delivery_record
-
+    MAX(CASE WHEN pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS is_vaccinated,
+    MAX(CASE WHEN pt.id IS NOT NULL AND pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS has_delivery_record,
+    MAX(CASE WHEN LOWER(pt.additional_details->>'receivedOPVBefore') = 'no' AND NULLIF(TRIM(pt.additional_details->>'ageInMonths'), '')::NUMERIC > 0.5 THEN 1 ELSE 0 END) AS is_zero_dose
 FROM project_beneficiary_enriched pb
-LEFT JOIN project_task_enriched pt
-    ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
-WHERE pb.is_deleted IS NOT TRUE;
+LEFT JOIN project_task_enriched pt ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
+WHERE pb.is_deleted IS NOT TRUE
+GROUP BY 
+    pb.beneficiary_id, pb.campaign_id,
+    pb.beneficiary_additional_fields->>'ageMonths', pb.beneficiary_additional_fields->>'settlementType',
+    pb.additional_details->>'gender', pb.additional_details->>'guestMember',
+    pb.country_code, pb.province_code, pb.district_code, pb.spp_code, pb.health_center_code, pb.village_code;
 
--- Foundation view indexes
-CREATE INDEX idx_vbtj_country       ON v_beneficiary_task_joined (country_code);
-CREATE INDEX idx_vbtj_province      ON v_beneficiary_task_joined (province_code);
-CREATE INDEX idx_vbtj_district      ON v_beneficiary_task_joined (district_code);
-CREATE INDEX idx_vbtj_spp           ON v_beneficiary_task_joined (spp_code);
-CREATE INDEX idx_vbtj_health        ON v_beneficiary_task_joined (health_center_code);
-CREATE INDEX idx_vbtj_village       ON v_beneficiary_task_joined (village_code);
-CREATE UNIQUE INDEX idx_vbtj_pk     ON v_beneficiary_task_joined (enumeration_record_id, COALESCE(task_id, 'NONE'));
+CREATE UNIQUE INDEX idx_dm_reg_ben_base ON dm_registration_beneficiary_base (beneficiary_id, COALESCE(campaign_id, 'NONE'));
+
+-- TIER 2A: Aggregate Metrics Base Mart
+CREATE MATERIALIZED VIEW dm_registration_metrics_base AS
+SELECT
+    campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code,
+    CASE
+        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
+        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
+        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
+        ELSE 'Other'
+    END AS age_band,
+    COALESCE(gender, 'Unknown') AS gender,
+    COALESCE(settlement_type, 'Unknown') AS settlement_type,
+    COUNT(*) AS total_enumerated_all,
+    COUNT(*) FILTER (WHERE age_months <= 59) AS enumerated_u5_count,
+    COUNT(*) FILTER (WHERE LOWER(guest_member) = 'yes') AS guest_member_count,
+    SUM(is_zero_dose) AS zero_dose_count,
+    SUM(is_vaccinated) FILTER (WHERE age_months <= 59) AS vaccinated_u5_count,
+    SUM(has_delivery_record) FILTER (WHERE age_months <= 59) AS delivered_u5_count
+FROM dm_registration_beneficiary_base
+GROUP BY 
+    campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code,
+    CASE
+        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
+        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
+        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
+        ELSE 'Other'
+    END, 
+    COALESCE(gender, 'Unknown'), 
+    COALESCE(settlement_type, 'Unknown');
+
+CREATE UNIQUE INDEX idx_dm_reg_metrics_base ON dm_registration_metrics_base (campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code, age_band, gender, settlement_type);
+
+-- TIER 2B: Household Metrics Base Mart
+CREATE MATERIALIZED VIEW dm_household_metrics_base AS
+SELECT
+    campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code,
+    COUNT(DISTINCT id) AS total_households_registered
+FROM household_enriched
+WHERE is_deleted IS NOT TRUE
+GROUP BY campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code;
+
+CREATE UNIQUE INDEX idx_dm_hh_metrics_base ON dm_household_metrics_base (campaign_id, country_code, province_code, district_code, spp_code, health_center_code, village_code);
 
 
 -- #############################################################################
@@ -78,77 +103,38 @@ CREATE UNIQUE INDEX idx_vbtj_pk     ON v_beneficiary_task_joined (enumeration_re
 
 -- Country
 CREATE MATERIALIZED VIEW dm_children_enumerated_country AS
-SELECT
-    country_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, campaign_id;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_children_enumerated_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, campaign_id;
 
 -- District
 CREATE MATERIALIZED VIEW dm_children_enumerated_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, campaign_id;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_children_enumerated_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_children_enumerated_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_children_enumerated_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS total_children_enumerated
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, SUM(enumerated_u5_count) AS total_children_enumerated
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id;
 
 -- Indexes
@@ -170,77 +156,38 @@ CREATE UNIQUE INDEX idx_dce_village_pk  ON dm_children_enumerated_village (count
 
 -- Country
 CREATE MATERIALIZED VIEW dm_households_registered_country AS
-SELECT
-    country_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, campaign_id;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_households_registered_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, province_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, province_code, campaign_id;
 
 -- District
 CREATE MATERIALIZED VIEW dm_households_registered_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, province_code, district_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, province_code, district_code, campaign_id;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_households_registered_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, province_code, district_code, spp_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_households_registered_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_households_registered_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
-WHERE is_deleted IS NOT TRUE
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, SUM(total_households_registered) AS total_households_registered
+FROM dm_household_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id;
 
 -- Indexes
@@ -261,138 +208,45 @@ CREATE UNIQUE INDEX idx_dhr_village_pk  ON dm_households_registered_village (cou
 
 -- Country
 CREATE MATERIALIZED VIEW dm_children_age_band_country AS
-SELECT
-    country_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, campaign_id, age_band;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_children_age_band_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, province_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, province_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, province_code, campaign_id, age_band;
 
 -- District
 CREATE MATERIALIZED VIEW dm_children_age_band_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, province_code, district_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, province_code, district_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, province_code, district_code, campaign_id, age_band;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_children_age_band_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, province_code, district_code, spp_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, province_code, district_code, spp_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, province_code, district_code, spp_code, campaign_id, age_band;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_children_age_band_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id, age_band;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_children_age_band_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END AS age_band,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id,
-    CASE
-        WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
-        WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
-        WHEN age_months BETWEEN 24 AND 59 THEN '24-59m'
-    END;
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, age_band, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
+WHERE age_band != \'Other\'
+GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, age_band;
 
 -- Indexes
 CREATE UNIQUE INDEX idx_dcab_country_pk  ON dm_children_age_band_country (country_code, campaign_id, age_band);
@@ -412,83 +266,38 @@ CREATE UNIQUE INDEX idx_dcab_village_pk  ON dm_children_age_band_village (countr
 
 -- Country
 CREATE MATERIALIZED VIEW dm_gender_breakdown_country AS
-SELECT
-    country_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, campaign_id, gender;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_gender_breakdown_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, campaign_id, gender;
 
 -- District
 CREATE MATERIALIZED VIEW dm_gender_breakdown_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, campaign_id, gender;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_gender_breakdown_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id, gender;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_gender_breakdown_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id, gender;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_gender_breakdown_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    gender,
-    COUNT(DISTINCT enumeration_record_id) AS children_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, gender, SUM(enumerated_u5_count) AS children_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, gender;
 
 -- Indexes
@@ -509,83 +318,38 @@ CREATE UNIQUE INDEX idx_dgb_village_pk  ON dm_gender_breakdown_village (country_
 
 -- Country
 CREATE MATERIALIZED VIEW dm_zero_dose_children_country AS
-SELECT
-    country_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, campaign_id;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_zero_dose_children_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, province_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, campaign_id;
 
 -- District
 CREATE MATERIALIZED VIEW dm_zero_dose_children_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, province_code, district_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, campaign_id;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_zero_dose_children_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, province_code, district_code, spp_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_zero_dose_children_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_zero_dose_children_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS zero_dose_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(received_opv_before) = 'no' 
-  AND task_age_months > 0.5
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, SUM(zero_dose_count) AS zero_dose_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id;
 
 -- Indexes
@@ -607,77 +371,38 @@ CREATE UNIQUE INDEX idx_dzdc_village_pk  ON dm_zero_dose_children_village (count
 
 -- Country
 CREATE MATERIALIZED VIEW dm_guest_member_country AS
-SELECT
-    country_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, campaign_id;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_guest_member_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, province_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, campaign_id;
 
 -- District
 CREATE MATERIALIZED VIEW dm_guest_member_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, province_code, district_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, campaign_id;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_guest_member_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, province_code, district_code, spp_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_guest_member_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_guest_member_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id) AS guest_member_count
-FROM v_beneficiary_task_joined
-WHERE LOWER(guest_member) = 'yes'
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, SUM(guest_member_count) AS guest_member_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id;
 
 -- Indexes
@@ -699,18 +424,10 @@ CREATE UNIQUE INDEX idx_dgm_village_pk  ON dm_guest_member_village (country_code
 -- #############################################################################
 
 CREATE MATERIALIZED VIEW dm_enumerated_not_vaccinated_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    COUNT(DISTINCT enumeration_record_id)                               AS enumeration_count,
-    COUNT(DISTINCT CASE WHEN has_delivery_record = 1
-                        THEN enumeration_record_id END)                 AS delivered_count
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id,
+    SUM(enumerated_u5_count) AS enumeration_count,
+    SUM(delivered_u5_count) AS delivered_count
+FROM dm_registration_metrics_base
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Index
@@ -726,119 +443,62 @@ CREATE UNIQUE INDEX idx_denv_hc_pk ON dm_enumerated_not_vaccinated_health_center
 
 -- Country
 CREATE MATERIALIZED VIEW dm_coverage_settlement_country AS
-SELECT
-    country_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, campaign_id, settlement_type;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_coverage_settlement_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, province_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, province_code, campaign_id, settlement_type;
 
 -- District
 CREATE MATERIALIZED VIEW dm_coverage_settlement_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, province_code, district_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, province_code, district_code, campaign_id, settlement_type;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_coverage_settlement_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, province_code, district_code, spp_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id, settlement_type;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_coverage_settlement_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id, settlement_type;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_coverage_settlement_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    settlement_type,
-    COUNT(DISTINCT enumeration_record_id) AS enumerated_count,
-    COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END) AS vaccinated_count,
-    ROUND(
-        COUNT(DISTINCT CASE WHEN is_vaccinated = 1 THEN enumeration_record_id END)::NUMERIC
-        / NULLIF(COUNT(DISTINCT enumeration_record_id), 0) * 100, 2
-    ) AS coverage_pct
-FROM v_beneficiary_task_joined
-WHERE age_months <= 59
-  AND settlement_type IS NOT NULL
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, settlement_type,
+    SUM(enumerated_u5_count) AS enumerated_count,
+    SUM(vaccinated_u5_count) AS vaccinated_count,
+    ROUND(SUM(vaccinated_u5_count)::NUMERIC / NULLIF(SUM(enumerated_u5_count), 0) * 100, 2) AS coverage_pct
+FROM dm_registration_metrics_base
+WHERE settlement_type != \'Unknown\'
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id, settlement_type;
 
 -- Indexes
@@ -860,107 +520,62 @@ CREATE UNIQUE INDEX idx_dcs_village_pk  ON dm_coverage_settlement_village (count
 
 -- Country
 CREATE MATERIALIZED VIEW dm_htr_vaccination_country AS
-SELECT
-    country_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_country
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, campaign_id;
 
 -- Province
 CREATE MATERIALIZED VIEW dm_htr_vaccination_province AS
-SELECT
-    country_code,
-    province_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, province_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_province
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, province_code, campaign_id;
 
 -- District
 CREATE MATERIALIZED VIEW dm_htr_vaccination_district AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, province_code, district_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_district
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, province_code, district_code, campaign_id;
 
 -- SPP
 CREATE MATERIALIZED VIEW dm_htr_vaccination_spp AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, province_code, district_code, spp_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_spp
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, province_code, district_code, spp_code, campaign_id;
 
 -- Health Center
 CREATE MATERIALIZED VIEW dm_htr_vaccination_health_center AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, province_code, district_code, spp_code, health_center_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_health_center
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, campaign_id;
 
 -- Village
 CREATE MATERIALIZED VIEW dm_htr_vaccination_village AS
-SELECT
-    country_code,
-    province_code,
-    district_code,
-    spp_code,
-    health_center_code,
-    village_code,
-    campaign_id,
-    SUM(enumerated_count)  AS htr_enumerated_count,
-    SUM(vaccinated_count)  AS htr_vaccinated_count,
-    ROUND(
-        SUM(vaccinated_count)::NUMERIC
-        / NULLIF(SUM(enumerated_count), 0) * 100, 2
-    ) AS htr_vaccination_rate
+SELECT country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id,
+    SUM(htr_enumerated_count) AS htr_enumerated_count,
+    SUM(htr_vaccinated_count) AS htr_vaccinated_count,
+    ROUND(SUM(htr_vaccinated_count)::NUMERIC / NULLIF(SUM(htr_enumerated_count), 0) * 100, 2) AS htr_vaccination_rate
 FROM dm_coverage_settlement_village
-WHERE settlement_type IN ('Hard to Reach', 'Nomads', 'Refugees')
+WHERE settlement_type IN (\'Hard to Reach\', \'Nomads\', \'Refugees\')
 GROUP BY country_code, province_code, district_code, spp_code, health_center_code, village_code, campaign_id;
 
 -- Indexes
@@ -983,7 +598,9 @@ CREATE UNIQUE INDEX idx_dhtr_village_pk  ON dm_htr_vaccination_village (country_
 -- #############################################################################
 
 -- Step 1: Foundation view
-REFRESH MATERIALIZED VIEW CONCURRENTLY v_beneficiary_task_joined;
+REFRESH MATERIALIZED VIEW CONCURRENTLY dm_registration_beneficiary_base;
+REFRESH MATERIALIZED VIEW CONCURRENTLY dm_registration_metrics_base;
+REFRESH MATERIALIZED VIEW CONCURRENTLY dm_household_metrics_base;
 
 -- Step 2: Independent data marts (can run in parallel)
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_children_enumerated_country;
