@@ -210,6 +210,26 @@ CREATE UNIQUE INDEX idx_hf_coverage_pk ON dm_health_facility_coverage (campaign_
 
 
 -- ==========================================================================
+-- KPI 3B: INACTIVE HEALTH FACILITIES
+-- ==========================================================================
+
+CREATE MATERIALIZED VIEW dm_inactive_health_facilities AS
+SELECT
+    enum_hf.campaign_id,
+    enum_hf.health_center_code
+FROM dm_enumerated_health_centers enum_hf
+LEFT JOIN dm_successful_deliveries_health_center succ_hf
+    ON enum_hf.campaign_id = succ_hf.campaign_id
+   AND enum_hf.health_center_code = succ_hf.health_center_code
+WHERE succ_hf.health_center_code IS NULL
+   OR succ_hf.successful_delivery_count = 0
+GROUP BY
+    enum_hf.campaign_id,
+    enum_hf.health_center_code;
+
+CREATE UNIQUE INDEX idx_inactive_hf_pk ON dm_inactive_health_facilities (campaign_id, health_center_code);
+
+-- ==========================================================================
 -- KPI 4: HEALTH FACILITY COVERAGE RATE BY HIERARCHY
 -- ==========================================================================
 
