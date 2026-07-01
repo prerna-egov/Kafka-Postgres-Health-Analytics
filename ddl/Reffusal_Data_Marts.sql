@@ -1,4 +1,3 @@
--- ================================================================
 -- VACCINATION CAMPAIGN KPI - MATERIALIZED VIEWS
 -- ================================================================
 
@@ -27,7 +26,21 @@ FROM project_beneficiary_enriched pb
          JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id
 GROUP BY pb.campaign_id, pb.country_code, pb.region_code, pb.district_code, pb.healthfacility_code, pb.settlement_code, pb.beneficiary_id;
 
-CREATE UNIQUE INDEX idx_dm_beneficiary_status_base ON dm_beneficiary_status_base (beneficiary_id);
+CREATE UNIQUE INDEX idx_dm_beneficiary_status_base ON dm_beneficiary_status_base (
+    campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, beneficiary_id
+);
+
+
+
+-- Indexes to optimize dynamic geographic filtering for KPIs 2, 3, and 9
+CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_province ON dm_beneficiary_status_base (campaign_id, region_code); -- Used by the 2nd query in KPIs 2, 3, 9
+CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_district ON dm_beneficiary_status_base (campaign_id, district_code); -- Used by the 3rd query in KPIs 2, 3, 9
+CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_hc ON dm_beneficiary_status_base (campaign_id, healthfacility_code); -- Used by the 4th query in KPIs 2, 3, 9
+CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_village ON dm_beneficiary_status_base (campaign_id, settlement_code); -- Used if drilling down to settlement level
+
+-- Note: The raw table indexes (idx_raw_ben_campaign_...) were deleted here because our recent optimization made KPI 9 use the base mart instead!
+-- ================================================================
+
 
 CREATE MATERIALIZED VIEW dm_task_status_base AS -- aggregation for different fields required by KPI's 
 SELECT
@@ -42,6 +55,10 @@ FROM project_task_enriched t
 GROUP BY t.campaign_id, t.country_code, t.region_code, t.district_code, t.healthfacility_code, t.settlement_code;
 
 CREATE UNIQUE INDEX idx_dm_task_status_base ON dm_task_status_base (campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code);
+-- Indices to optimize dynamic geographic filtering with skipped hierarchy
+CREATE INDEX IF NOT EXISTS idx_task_status_camp_province ON dm_task_status_base (campaign_id, region_code);
+CREATE INDEX IF NOT EXISTS idx_task_status_camp_district ON dm_task_status_base (campaign_id, district_code);
+CREATE INDEX IF NOT EXISTS idx_task_status_camp_hc ON dm_task_status_base (campaign_id, healthfacility_code);
 -- Unique is used for concurrent refreshing
 CREATE MATERIALIZED VIEW dm_task_breakdown_base AS
 SELECT
@@ -56,7 +73,13 @@ FROM project_task_enriched
 GROUP BY campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code,
          COALESCE(additional_details ->> 'refusalReason', 'Unknown'), -- refusal reason breakdown (KPI 4)
          CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END, -- absence reason breakdown (KPI 5)
-         COALESCE(additional_details ->> 'settlementType', 'Unknown'); -- settlement type breakdown (KPI 7)
 
-CREATE UNIQUE INDEX idx_dm_task_breakdown_base ON dm_task_breakdown_base (campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, refusal_reason, absence_category, settlement_type);
-
+-- ---------------------------------------------------------------
+-- REFRESH STRATEGY (pg_cron)
+-- ---------------------------------------------------------------
+/*
+SELECT cron.schedule('refresh_kpi_views', '*/30 * * * *', $$
+    -- 1. Refresh Base Marts
+    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_beneficiary_status_base;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_status_base;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_breakdown_base;
