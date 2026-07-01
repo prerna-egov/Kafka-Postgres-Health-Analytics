@@ -118,7 +118,7 @@ FULL OUTER JOIN delivered_hfs d
    AND t.healthfacility_code = d.healthfacility_code;
 
 CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, product_name, healthfacility_code);
-CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, product_name, is_targeted, is_delivered);
+CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, product_name) WHERE is_targeted = TRUE AND is_delivered = FALSE;
 -- Geographic drill-down optimization tuples for KPIs 3 & 4
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_country ON dm_health_facility_status (campaign_id, product_name, country_code);
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_region ON dm_health_facility_status (campaign_id, product_name, region_code);
@@ -236,7 +236,6 @@ CREATE UNIQUE INDEX idx_dist_perf_pk ON dm_district_performance (campaign_id, di
 CREATE INDEX idx_dist_perf_province ON dm_district_performance (campaign_id, region_code);
 CREATE INDEX idx_dist_perf_rank ON dm_district_performance (campaign_id, coverage_rank);
 CREATE INDEX idx_dist_perf_coverage ON dm_district_performance (campaign_id, actual_coverage);
-
 
 
 -- ==========================================================================
