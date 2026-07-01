@@ -99,7 +99,7 @@ CREATE UNIQUE INDEX idx_dm_hh_metrics_base ON dm_household_metrics_base (campaig
 -- Indexes for dm_registration_metrics_base
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_country ON dm_registration_metrics_base (campaign_id, country_code);
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_region ON dm_registration_metrics_base (campaign_id, region_code);
-CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_district ON dm_registration_metrics_base (campaign_id, district_code);
+CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_district ON dm_registration_metrics_base (campaign_id, district_code);  
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_hc ON dm_registration_metrics_base (campaign_id, healthfacility_code);
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_spp ON dm_registration_metrics_base (campaign_id);
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_village ON dm_registration_metrics_base (campaign_id, settlement_code);
