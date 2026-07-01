@@ -66,6 +66,7 @@ SELECT
     MAX(campaign_duration_in_days) AS total_days
 FROM project_enriched
 WHERE district_code IS NOT NULL
+  AND health_center_code IS NULL
   AND start_date IS NOT NULL
   AND end_date IS NOT NULL
 GROUP BY country_code, region_code, district_code, campaign_id;
