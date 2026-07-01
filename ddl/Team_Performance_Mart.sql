@@ -18,6 +18,10 @@ CREATE MATERIALIZED VIEW dm_team_performance_base AS
 SELECT
     pt.project_id,
     pt.campaign_id,
+    pt.country_code,
+    pt.region_code,
+    pt.district_code,
+    pt.healthfacility_code,
     pt.settlement_code,
     pt.user_name AS team_id,
     pt.task_dates AS task_date,
@@ -36,9 +40,14 @@ FROM project_task_enriched pt
 LEFT JOIN project_beneficiary_enriched pb 
     ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
 GROUP BY
-    pt.project_id, pt.campaign_id, pt.settlement_code, pt.user_name, pt.task_dates;
+    pt.project_id, pt.campaign_id, pt.country_code, pt.region_code, pt.district_code, pt.healthfacility_code, pt.settlement_code, pt.user_name, pt.task_dates;
 
-CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (COALESCE(project_id, 'NONE'), COALESCE(campaign_id, 'NONE'), COALESCE(settlement_code, 'NONE'), COALESCE(team_id, 'NONE'), COALESCE(task_date, 'NONE'));
+CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (COALESCE(project_id, 'NONE'), COALESCE(campaign_id, 'NONE'), COALESCE(country_code, 'NONE'), COALESCE(region_code, 'NONE'), COALESCE(district_code, 'NONE'), COALESCE(healthfacility_code, 'NONE'), COALESCE(settlement_code, 'NONE'), COALESCE(team_id, 'NONE'), COALESCE(task_date, 'NONE'));
+
+
+-- #############################################################################
+-- SECTION 1: KPI VIEWS
+-- #############################################################################
 
 -- KPI 1: Team Performance League Table (Vaccinations vs Target)
 -- Provides a ranked list of all teams in a campaign based on their performance.
@@ -73,6 +82,7 @@ CREATE UNIQUE INDEX idx_dm_team_league_pk ON dm_team_performance_league (campaig
 CREATE INDEX idx_dm_team_league_rank ON dm_team_performance_league (campaign_id, performance_rank);
 
 
+
 -- KPI 2: Daily Submission Velocity
 -- Materialized view to pre-calculate daily submissions for all teams across all campaigns.
 CREATE MATERIALIZED VIEW dm_team_daily_velocity AS
@@ -91,58 +101,56 @@ CREATE UNIQUE INDEX idx_dm_team_daily_velocity ON dm_team_daily_velocity (COALES
 
 
 
--- KPI 3: Submission Rate per Hour (Flagging Outliers)
-CREATE MATERIALIZED VIEW dm_team_submission_flags_village AS
-SELECT DISTINCT campaign_id, team_id
-FROM (
-    SELECT 
-        settlement_code, campaign_id, task_date, team_id,
-        (SUM(total_submissions) / (GREATEST(MAX(max_created_time) - MIN(min_created_time), 1000) / 60000.0)) AS rate_per_minute
-    FROM dm_team_performance_base
-    GROUP BY settlement_code, campaign_id, task_date, team_id
-    HAVING SUM(total_submissions) > 1
-) AS flagged_events
-WHERE rate_per_minute > 10.0;
+-- -- KPI 3: Submission Rate per Hour (Flagging Outliers)
+-- CREATE MATERIALIZED VIEW dm_team_submission_flags_village AS
+-- SELECT DISTINCT campaign_id, team_id
+-- FROM (
+--     SELECT 
+--         settlement_code, campaign_id, task_date, team_id,
+--         (SUM(total_submissions) / (GREATEST(MAX(max_created_time) - MIN(min_created_time), 1000) / 60000.0)) AS rate_per_minute
+--     FROM dm_team_performance_base
+--     GROUP BY settlement_code, campaign_id, task_date, team_id
+--     HAVING SUM(total_submissions) > 1
+-- ) AS flagged_events
+-- WHERE rate_per_minute > 10.0 ; -- required threshold 
 
-CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_id, team_id);
-
-
+-- CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_id, team_id);
 
 -- KPI 4 & 5: Consolidated Sync Metrics (Rate & Timing)
-CREATE MATERIALIZED VIEW dm_team_sync_metrics_village AS
+CREATE MATERIALIZED VIEW dm_team_sync_metrics_base AS
 WITH team_daily_sync AS (
     SELECT 
-        settlement_code, campaign_id, task_date, team_id,
+        campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id,
         MAX(is_synced_today) AS is_synced_today
     FROM dm_team_performance_base
-    GROUP BY settlement_code, campaign_id, task_date, team_id
+    GROUP BY campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id
 ),
 sync_rate AS (
     SELECT
-        settlement_code,
-        campaign_id,
-        task_date,
+        campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date,
         COUNT(*) AS total_active_teams,
         SUM(is_synced_today) AS synced_teams_count,
         ROUND((SUM(is_synced_today) * 100.0) / NULLIF(COUNT(*), 0), 2) AS sync_rate_percentage
     FROM team_daily_sync
-    GROUP BY settlement_code, campaign_id, task_date
+    GROUP BY campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date
 ),
 sync_timing AS (
     SELECT
-        settlement_code,
-        campaign_id,
-        task_date,
+        campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date,
         SUM(under_1hr_count) AS under_1hr_count,
         SUM(one_to_6hr_count) AS one_to_6hr_count,
         SUM(six_to_24hr_count) AS six_to_24hr_count,
         SUM(over_24hr_count) AS over_24hr_count
     FROM dm_team_performance_base
-    GROUP BY settlement_code, campaign_id, task_date
+    GROUP BY campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, task_date
 )
 SELECT
-    COALESCE(r.settlement_code, t.settlement_code) AS settlement_code,
     COALESCE(r.campaign_id, t.campaign_id) AS campaign_id,
+    COALESCE(r.country_code, t.country_code) AS country_code,
+    COALESCE(r.region_code, t.region_code) AS region_code,
+    COALESCE(r.district_code, t.district_code) AS district_code,
+    COALESCE(r.healthfacility_code, t.healthfacility_code) AS healthfacility_code,
+    COALESCE(r.settlement_code, t.settlement_code) AS settlement_code,
     COALESCE(r.task_date, t.task_date) AS task_date,
     COALESCE(r.total_active_teams, 0) AS total_active_teams,
     COALESCE(r.synced_teams_count, 0) AS synced_teams_count,
@@ -153,11 +161,20 @@ SELECT
     COALESCE(t.over_24hr_count, 0) AS over_24hr_count
 FROM sync_rate r
 FULL OUTER JOIN sync_timing t 
-  ON r.settlement_code = t.settlement_code 
- AND r.campaign_id = t.campaign_id 
+  ON r.campaign_id = t.campaign_id 
+ AND r.country_code = t.country_code
+ AND r.region_code = t.region_code
+ AND r.district_code = t.district_code
+ AND r.healthfacility_code = t.healthfacility_code
+ AND r.settlement_code = t.settlement_code 
  AND r.task_date = t.task_date;
 
-CREATE UNIQUE INDEX idx_dm_team_sync_metrics_vil ON dm_team_sync_metrics_village (COALESCE(settlement_code, 'NONE'), COALESCE(campaign_id, 'NONE'), COALESCE(task_date, 'NONE'));
+CREATE UNIQUE INDEX idx_dm_team_sync_metrics_base ON dm_team_sync_metrics_base (COALESCE(campaign_id, 'NONE'), COALESCE(country_code, 'NONE'), COALESCE(region_code, 'NONE'), COALESCE(district_code, 'NONE'), COALESCE(healthfacility_code, 'NONE'), COALESCE(settlement_code, 'NONE'), COALESCE(task_date, 'NONE'));
+CREATE INDEX idx_dm_team_sync_country ON dm_team_sync_metrics_base (campaign_id, country_code, task_date);
+CREATE INDEX idx_dm_team_sync_region ON dm_team_sync_metrics_base (campaign_id, region_code, task_date);
+CREATE INDEX idx_dm_team_sync_district ON dm_team_sync_metrics_base (campaign_id, district_code, task_date);
+CREATE INDEX idx_dm_team_sync_hf ON dm_team_sync_metrics_base (campaign_id, healthfacility_code, task_date);
+
 
 
 -- KPI 6: Average Sync Lag per Team (Ranked)
@@ -176,15 +193,3 @@ GROUP BY
 
 CREATE UNIQUE INDEX idx_dm_team_sync_lag_camp ON dm_team_sync_lag_campaign (COALESCE(campaign_id, 'NONE'), COALESCE(team_id, 'NONE'));
 CREATE INDEX idx_dm_team_sync_lag_rank ON dm_team_sync_lag_campaign (campaign_id, sync_lag_rank);
-
--- #############################################################################
--- SECTION 2: REFRESH SCRIPT
--- #############################################################################
-
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_performance_base;
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_performance_league;
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_daily_velocity;
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_submission_flags_village;
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_sync_metrics_village;
--- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_team_sync_lag_campaign;
-
