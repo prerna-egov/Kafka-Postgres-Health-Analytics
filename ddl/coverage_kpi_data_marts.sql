@@ -26,17 +26,10 @@ WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
 GROUP BY country_code, region_code, district_code, healthfacility_code, settlement_code, campaign_id, TO_DATE(task_dates, 'YYYY-MM-DD');
 
 CREATE UNIQUE INDEX idx_sd_base_pk ON dm_successful_deliveries_base (
-    country_code, region_code, district_code, healthfacility_code, settlement_code, campaign_id, event_date
+    campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, event_date
 );
-CREATE INDEX idx_sd_base_campaign ON dm_successful_deliveries_base (campaign_id);
 CREATE INDEX idx_sd_base_date ON dm_successful_deliveries_base (event_date);
 CREATE INDEX idx_sd_base_camp_date ON dm_successful_deliveries_base (campaign_id, event_date DESC);
-
--- Geographic drill-down optimization tuples for KPI 1
-CREATE INDEX IF NOT EXISTS idx_sd_base_camp_country ON dm_successful_deliveries_base (campaign_id, country_code);
-CREATE INDEX IF NOT EXISTS idx_sd_base_camp_region ON dm_successful_deliveries_base (campaign_id, region_code);
-CREATE INDEX IF NOT EXISTS idx_sd_base_camp_district ON dm_successful_deliveries_base (campaign_id, district_code);
-CREATE INDEX IF NOT EXISTS idx_sd_base_camp_hc ON dm_successful_deliveries_base (campaign_id, healthfacility_code);
 
 CREATE MATERIALIZED VIEW dm_enumerated_health_centers AS
 SELECT DISTINCT
@@ -66,12 +59,12 @@ SELECT
     MAX(campaign_duration_in_days) AS total_days
 FROM project_enriched
 WHERE district_code IS NOT NULL
-  AND health_center_code IS NULL
   AND start_date IS NOT NULL
   AND end_date IS NOT NULL
+  AND health_center_code IS NULL
 GROUP BY country_code, region_code, district_code, campaign_id;
 
-CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (district_code, campaign_id);
+CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (campaign_id, district_code);
 
 
 
@@ -128,6 +121,7 @@ FULL OUTER JOIN (
    AND e.healthfacility_code = d.healthfacility_code;
 
 CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, healthfacility_code);
+CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, is_enumerated, is_delivered);
 -- Geographic drill-down optimization tuples for KPIs 3 & 4
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_country ON dm_health_facility_status (campaign_id, country_code);
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_region ON dm_health_facility_status (campaign_id, region_code);
@@ -184,6 +178,7 @@ SELECT
 FROM campaign_stats;
 
 CREATE UNIQUE INDEX idx_campaign_forecast_pk ON dm_campaign_forecast (campaign_id);
+CREATE INDEX idx_campaign_forecast_leaderboard ON dm_campaign_forecast (on_track, projected_coverage DESC);
 
 
 -- ==========================================================================
@@ -240,10 +235,12 @@ SELECT
     ) AS coverage_rank
 FROM district_metrics_computed;
 
-CREATE UNIQUE INDEX idx_dist_perf_pk ON dm_district_performance (district_code, campaign_id);
-CREATE INDEX idx_dist_perf_campaign ON dm_district_performance (campaign_id);
-CREATE INDEX idx_dist_perf_province ON dm_district_performance (region_code, campaign_id);
+CREATE UNIQUE INDEX idx_dist_perf_pk ON dm_district_performance (campaign_id, district_code);
+CREATE INDEX idx_dist_perf_province ON dm_district_performance (campaign_id, region_code);
 CREATE INDEX idx_dist_perf_rank ON dm_district_performance (campaign_id, coverage_rank);
+CREATE INDEX idx_dist_perf_coverage ON dm_district_performance (campaign_id, actual_coverage);
+
+
 
 -- ==========================================================================
 -- SECTION: REFRESH STRATEGY
