@@ -244,7 +244,6 @@ CREATE INDEX idx_dist_perf_campaign ON dm_district_performance (campaign_id);
 CREATE INDEX idx_dist_perf_province ON dm_district_performance (region_code, campaign_id);
 CREATE INDEX idx_dist_perf_rank ON dm_district_performance (campaign_id, coverage_rank);
 
-
 -- ==========================================================================
 -- SECTION: REFRESH STRATEGY
 -- ==========================================================================
@@ -261,5 +260,3 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY dm_health_facility_status;
 
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_campaign_forecast;
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_district_performance;
-
-
