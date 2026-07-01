@@ -19,32 +19,20 @@ SELECT
     healthfacility_code,
     settlement_code,
     campaign_id,
+    product_name,
     TO_DATE(task_dates, 'YYYY-MM-DD') AS event_date,
     COUNT(*) AS total_vaccinated
 FROM project_task_enriched
 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
-GROUP BY country_code, region_code, district_code, healthfacility_code, settlement_code, campaign_id, TO_DATE(task_dates, 'YYYY-MM-DD');
+GROUP BY country_code, region_code, district_code, healthfacility_code, settlement_code, campaign_id, product_name, TO_DATE(task_dates, 'YYYY-MM-DD');
 
 CREATE UNIQUE INDEX idx_sd_base_pk ON dm_successful_deliveries_base (
-    campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, event_date
+    campaign_id, product_name, country_code, region_code, district_code, healthfacility_code, settlement_code, event_date
 );
 CREATE INDEX idx_sd_base_date ON dm_successful_deliveries_base (event_date);
 CREATE INDEX idx_sd_base_camp_date ON dm_successful_deliveries_base (campaign_id, event_date DESC);
 
-CREATE MATERIALIZED VIEW dm_enumerated_health_centers AS
-SELECT DISTINCT
-    campaign_id,
-    country_code,
-    region_code,
-    district_code,
-    healthfacility_code
-FROM project_beneficiary_enriched
-WHERE healthfacility_code IS NOT NULL
-  AND is_deleted IS NOT TRUE;
 
-CREATE UNIQUE INDEX idx_enum_hc_pk ON dm_enumerated_health_centers (
-    campaign_id, country_code, region_code, district_code, healthfacility_code
-);
 
 
 CREATE MATERIALIZED VIEW dm_district_targets AS
@@ -53,6 +41,7 @@ SELECT
     region_code,
     district_code,
     campaign_id,
+    product_name,
     SUM(overall_target) AS target_population,
     TO_TIMESTAMP(MIN(start_date) / 1000)::DATE AS start_date,
     TO_TIMESTAMP(MAX(end_date)   / 1000)::DATE AS end_date,
@@ -61,10 +50,10 @@ FROM project_enriched
 WHERE district_code IS NOT NULL
   AND start_date IS NOT NULL
   AND end_date IS NOT NULL
-  AND health_center_code IS NULL
-GROUP BY country_code, region_code, district_code, campaign_id;
+  AND healthfacility_code IS NULL
+GROUP BY country_code, region_code, district_code, campaign_id, product_name;
 
-CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (campaign_id, district_code);
+CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (campaign_id, product_name, district_code);
 
 
 
@@ -74,26 +63,27 @@ CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (campaign_id,
 
 CREATE MATERIALIZED VIEW dm_campaign_coverage AS
 WITH campaign_deliveries AS (
-    SELECT campaign_id, SUM(total_vaccinated) AS total_vaccinated
+    SELECT campaign_id, product_name, SUM(total_vaccinated) AS total_vaccinated
     FROM dm_successful_deliveries_base
-    GROUP BY campaign_id
+    GROUP BY campaign_id, product_name
 ),
 campaign_targets_cte AS (
-    SELECT campaign_id, SUM(target_population) AS target_population
+    SELECT campaign_id, product_name, SUM(target_population) AS target_population
     FROM dm_district_targets
-    GROUP BY campaign_id
+    GROUP BY campaign_id, product_name
 )
 SELECT
     t.campaign_id,
+    t.product_name,
     COALESCE(d.total_vaccinated, 0) AS total_vaccinated,
     t.target_population,
     ROUND(
         COALESCE(d.total_vaccinated, 0)::NUMERIC / NULLIF(t.target_population, 0) * 100, 2
     ) AS coverage_percentage
 FROM campaign_targets_cte t
-LEFT JOIN campaign_deliveries d ON t.campaign_id = d.campaign_id;
+LEFT JOIN campaign_deliveries d ON t.campaign_id = d.campaign_id AND t.product_name = d.product_name;
 
-CREATE UNIQUE INDEX idx_campaign_coverage_pk ON dm_campaign_coverage (campaign_id);
+CREATE UNIQUE INDEX idx_campaign_coverage_pk ON dm_campaign_coverage (campaign_id, product_name);
 
 
 -- ==========================================================================
@@ -101,27 +91,34 @@ CREATE UNIQUE INDEX idx_campaign_coverage_pk ON dm_campaign_coverage (campaign_i
 -- ==========================================================================
 
 CREATE MATERIALIZED VIEW dm_health_facility_status AS
-SELECT 
-    COALESCE(e.campaign_id, d.campaign_id) AS campaign_id,
-    COALESCE(e.country_code, d.country_code) AS country_code,
-    COALESCE(e.region_code, d.region_code) AS region_code,
-    COALESCE(e.district_code, d.district_code) AS district_code,
-    COALESCE(e.healthfacility_code, d.healthfacility_code) AS healthfacility_code,
-    CASE WHEN e.healthfacility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_enumerated,
-    CASE WHEN COALESCE(d.total_vaccinated, 0) > 0 THEN TRUE ELSE FALSE END AS is_delivered,
-    COALESCE(d.total_vaccinated, 0) AS delivery_count
-FROM dm_enumerated_health_centers e
-FULL OUTER JOIN (
-    SELECT country_code, region_code, district_code, healthfacility_code, campaign_id, SUM(total_vaccinated) AS total_vaccinated
-    FROM dm_successful_deliveries_base 
+WITH target_hfs AS (
+    SELECT DISTINCT campaign_id, product_name, country_code, region_code, district_code, healthfacility_code
+    FROM project_enriched
     WHERE healthfacility_code IS NOT NULL
-    GROUP BY country_code, region_code, district_code, healthfacility_code, campaign_id
-) d 
-    ON e.campaign_id = d.campaign_id 
-   AND e.healthfacility_code = d.healthfacility_code;
+),
+delivered_hfs AS (
+    SELECT DISTINCT campaign_id, product_name, country_code, region_code, district_code, healthfacility_code
+    FROM project_task_enriched
+    WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
+      AND healthfacility_code IS NOT NULL
+)
+SELECT 
+    COALESCE(t.campaign_id, d.campaign_id) AS campaign_id,
+    COALESCE(t.product_name, d.product_name) AS product_name,
+    COALESCE(t.country_code, d.country_code) AS country_code,
+    COALESCE(t.region_code, d.region_code) AS region_code,
+    COALESCE(t.district_code, d.district_code) AS district_code,
+    COALESCE(t.healthfacility_code, d.healthfacility_code) AS healthfacility_code,
+    CASE WHEN t.healthfacility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_targeted,
+    CASE WHEN d.healthfacility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_delivered
+FROM target_hfs t
+FULL OUTER JOIN delivered_hfs d 
+    ON t.campaign_id = d.campaign_id 
+   AND t.product_name = d.product_name
+   AND t.healthfacility_code = d.healthfacility_code;
 
-CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, healthfacility_code);
-CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, is_enumerated, is_delivered);
+CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, product_name, healthfacility_code);
+CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, is_targeted, is_delivered);
 -- Geographic drill-down optimization tuples for KPIs 3 & 4
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_country ON dm_health_facility_status (campaign_id, country_code);
 CREATE INDEX IF NOT EXISTS idx_hf_status_camp_region ON dm_health_facility_status (campaign_id, region_code);
@@ -242,19 +239,13 @@ CREATE INDEX idx_dist_perf_coverage ON dm_district_performance (campaign_id, act
 
 
 
--- ==========================================================================
--- SECTION: REFRESH STRATEGY
--- ==========================================================================
 
--- STEP 1: Independent base marts
+
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_successful_deliveries_base;
-REFRESH MATERIALIZED VIEW CONCURRENTLY dm_enumerated_health_centers;
 
-
-
--- STEP 3: Dependent marts
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_campaign_coverage;
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_health_facility_status;
 
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_campaign_forecast;
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_district_performance;
+
