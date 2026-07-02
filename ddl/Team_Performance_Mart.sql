@@ -17,7 +17,7 @@
 CREATE MATERIALIZED VIEW dm_team_performance_base AS
 SELECT
     pt.project_id,
-    pt.campaign_id,
+    pt.campaign_number,
     pt.region_code,
     pt.district_code,
     pt.healthfacility_code,
@@ -39,9 +39,9 @@ FROM project_task_enriched pt
 LEFT JOIN project_beneficiary_enriched pb 
     ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
 GROUP BY
-    pt.project_id, pt.campaign_id, pt.region_code, pt.district_code, pt.healthfacility_code, pt.settlement_code, pt.user_name, pt.task_dates;
+    pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.healthfacility_code, pt.settlement_code, pt.user_name, pt.task_dates;
 
-CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (project_id, campaign_id, region_code, district_code, healthfacility_code, settlement_code, team_id, task_date);
+CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (project_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, team_id, task_date);
 
 
 -- #############################################################################
@@ -53,32 +53,32 @@ CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (project_i
 
 CREATE MATERIALIZED VIEW dm_team_performance_league AS
 WITH target_data AS (
-    SELECT campaign_id, user_name AS team_id, COUNT(DISTINCT beneficiary_id) AS target
+    SELECT campaign_number, user_name AS team_id, COUNT(DISTINCT beneficiary_id) AS target
     FROM project_beneficiary_enriched
     WHERE is_deleted IS NOT TRUE
-    GROUP BY campaign_id, user_name
+    GROUP BY campaign_number, user_name
 ),
 vaccinated_data AS (
-    SELECT campaign_id, team_id, SUM(vaccinated_count) AS vaccinated
+    SELECT campaign_number, team_id, SUM(vaccinated_count) AS vaccinated
     FROM dm_team_performance_base
-    GROUP BY campaign_id, team_id
+    GROUP BY campaign_number, team_id
 )
 SELECT
-    COALESCE(v.campaign_id, t.campaign_id) AS campaign_id,
+    COALESCE(v.campaign_number, t.campaign_number) AS campaign_number,
     COALESCE(v.team_id, t.team_id) AS team_id,
     COALESCE(v.vaccinated, 0) AS vaccinated,
     COALESCE(t.target, 0) AS target,
     ROUND((COALESCE(v.vaccinated, 0)::NUMERIC / NULLIF(COALESCE(t.target, 0), 0)) * 100, 2) AS performance_percentage,
     RANK() OVER (
-        PARTITION BY COALESCE(v.campaign_id, t.campaign_id)
+        PARTITION BY COALESCE(v.campaign_number, t.campaign_number)
         ORDER BY COALESCE(v.vaccinated, 0) DESC NULLS LAST
     ) AS performance_rank
 FROM target_data t
 FULL OUTER JOIN vaccinated_data v 
-  ON t.campaign_id = v.campaign_id AND t.team_id = v.team_id;
+  ON t.campaign_number = v.campaign_number AND t.team_id = v.team_id;
 
-CREATE UNIQUE INDEX idx_dm_team_league_pk ON dm_team_performance_league (campaign_id, team_id);
-CREATE INDEX idx_dm_team_league_rank ON dm_team_performance_league (campaign_id, performance_rank);
+CREATE UNIQUE INDEX idx_dm_team_league_pk ON dm_team_performance_league (campaign_number, team_id);
+CREATE INDEX idx_dm_team_league_rank ON dm_team_performance_league (campaign_number, performance_rank);
 
 
 
@@ -86,65 +86,65 @@ CREATE INDEX idx_dm_team_league_rank ON dm_team_performance_league (campaign_id,
 -- Materialized view to pre-calculate daily submissions for all teams across all campaigns.
 CREATE MATERIALIZED VIEW dm_team_daily_velocity AS
 SELECT
-    tp.campaign_id,
+    tp.campaign_number,
     tp.team_id,
     tp.task_date,
     SUM(tp.total_submissions) AS submissions_per_day
 FROM dm_team_performance_base tp
 JOIN project_enriched p ON tp.project_id = p.id
 WHERE (EXTRACT(EPOCH FROM tp.task_date) * 1000)::BIGINT BETWEEN p.start_date AND p.end_date
-GROUP BY tp.campaign_id, tp.team_id, tp.task_date;
+GROUP BY tp.campaign_number, tp.team_id, tp.task_date;
 
-CREATE UNIQUE INDEX idx_dm_team_daily_velocity ON dm_team_daily_velocity (campaign_id, team_id, task_date);
+CREATE UNIQUE INDEX idx_dm_team_daily_velocity ON dm_team_daily_velocity (campaign_number, team_id, task_date);
 
 
 
 
 -- -- KPI 3: Submission Rate per Hour (Flagging Outliers)
 -- CREATE MATERIALIZED VIEW dm_team_submission_flags_village AS
--- SELECT DISTINCT campaign_id, team_id
+-- SELECT DISTINCT campaign_number, team_id
 -- FROM (
 --     SELECT 
---         settlement_code, campaign_id, task_date, team_id,
+--         settlement_code, campaign_number, task_date, team_id,
 --         (SUM(total_submissions) / (GREATEST(MAX(max_created_time) - MIN(min_created_time), 1000) / 60000.0)) AS rate_per_minute
 --     FROM dm_team_performance_base
---     GROUP BY settlement_code, campaign_id, task_date, team_id
+--     GROUP BY settlement_code, campaign_number, task_date, team_id
 --     HAVING SUM(total_submissions) > 1
 -- ) AS flagged_events
 -- WHERE rate_per_minute > 10.0 ; -- required threshold 
 
--- CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_id, team_id);
+-- CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_number, team_id);
 
 -- KPI 4 & 5: Consolidated Sync Metrics (Rate & Timing)
 CREATE MATERIALIZED VIEW dm_team_sync_metrics_base AS
 WITH team_daily_sync AS (
     SELECT 
-        campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id,
+        campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id,
         MAX(is_synced_today) AS is_synced_today
     FROM dm_team_performance_base
-    GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id
+    GROUP BY campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id
 ),
 sync_rate AS (
     SELECT
-        campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date,
+        campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date,
         COUNT(*) AS total_active_teams,
         SUM(is_synced_today) AS synced_teams_count,
         ROUND((SUM(is_synced_today) * 100.0) / NULLIF(COUNT(*), 0), 2) AS sync_rate_percentage
     FROM team_daily_sync
-    GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date
+    GROUP BY campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date
 ),
 sync_timing AS (
     SELECT
-        campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date,
+        campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date,
         SUM(under_1hr_count) AS under_1hr_count,
         SUM(one_to_6hr_count) AS one_to_6hr_count,
         SUM(six_to_24hr_count) AS six_to_24hr_count,
         SUM(over_24hr_count) AS over_24hr_count
     FROM dm_team_performance_base
-    GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date
+    GROUP BY campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date
 )
 SELECT
-    COALESCE(r.campaign_id, t.campaign_id) AS campaign_id,
+    COALESCE(r.campaign_number, t.campaign_number) AS campaign_number,
     COALESCE(r.region_code, t.region_code) AS region_code,
     COALESCE(r.district_code, t.district_code) AS district_code,
     COALESCE(r.healthfacility_code, t.healthfacility_code) AS healthfacility_code,
@@ -159,34 +159,34 @@ SELECT
     COALESCE(t.over_24hr_count, 0) AS over_24hr_count
 FROM sync_rate r
 FULL OUTER JOIN sync_timing t 
-  ON r.campaign_id = t.campaign_id 
+  ON r.campaign_number = t.campaign_number 
  AND r.region_code = t.region_code
  AND r.district_code = t.district_code
  AND r.healthfacility_code = t.healthfacility_code
  AND r.settlement_code = t.settlement_code 
  AND r.task_date = t.task_date;
 
-CREATE UNIQUE INDEX idx_dm_team_sync_metrics_base ON dm_team_sync_metrics_base (campaign_id, region_code, district_code, healthfacility_code, settlement_code, task_date);
-CREATE INDEX idx_dm_team_sync_region ON dm_team_sync_metrics_base (campaign_id, region_code, task_date);
-CREATE INDEX idx_dm_team_sync_district ON dm_team_sync_metrics_base (campaign_id, district_code, task_date);
-CREATE INDEX idx_dm_team_sync_hf ON dm_team_sync_metrics_base (campaign_id, healthfacility_code, task_date);
+CREATE UNIQUE INDEX idx_dm_team_sync_metrics_base ON dm_team_sync_metrics_base (campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date);
+CREATE INDEX idx_dm_team_sync_region ON dm_team_sync_metrics_base (campaign_number, region_code, task_date);
+CREATE INDEX idx_dm_team_sync_district ON dm_team_sync_metrics_base (campaign_number, district_code, task_date);
+CREATE INDEX idx_dm_team_sync_hf ON dm_team_sync_metrics_base (campaign_number, healthfacility_code, task_date);
 
 
 
 -- KPI 6: Average Sync Lag per Team (Ranked)
 CREATE MATERIALIZED VIEW dm_team_sync_lag_campaign AS
 SELECT
-    campaign_id,
+    campaign_number,
     team_id,
     SUM(total_sync_lag_ms) / NULLIF(SUM(valid_sync_count), 0) AS avg_sync_lag,
     RANK() OVER (
-        PARTITION BY campaign_id
+        PARTITION BY campaign_number
         ORDER BY SUM(total_sync_lag_ms) / NULLIF(SUM(valid_sync_count), 0) ASC NULLS LAST
     ) AS sync_lag_rank
 FROM dm_team_performance_base
 GROUP BY
-    campaign_id, team_id;
+    campaign_number, team_id;
 
-CREATE UNIQUE INDEX idx_dm_team_sync_lag_camp ON dm_team_sync_lag_campaign (campaign_id, team_id);
-CREATE INDEX idx_dm_team_sync_lag_rank ON dm_team_sync_lag_campaign (campaign_id, sync_lag_rank);
+CREATE UNIQUE INDEX idx_dm_team_sync_lag_camp ON dm_team_sync_lag_campaign (campaign_number, team_id);
+CREATE INDEX idx_dm_team_sync_lag_rank ON dm_team_sync_lag_campaign (campaign_number, sync_lag_rank);
 
