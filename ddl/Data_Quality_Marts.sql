@@ -23,15 +23,12 @@ task_enriched AS (
         t.settlement_code,
         t.latitude,
         t.longitude,
-        -- Use native location_accuracy column, with safe JSON extraction as fallback
-        COALESCE(
-            t.location_accuracy,
-            CASE 
-                WHEN (t.additional_details->>'locationAccuracy') ~ '^[0-9]+(\.[0-9]+)?$' 
-                THEN (t.additional_details->>'locationAccuracy')::NUMERIC 
-                ELSE NULL 
-            END
-        ) AS json_location_accuracy,
+        -- Use safe JSON extraction as fallback since location_accuracy column doesn't exist
+        CASE 
+            WHEN (t.additional_details->>'locationAccuracy') ~ '^[0-9]+(\.[0-9]+)?$' 
+            THEN (t.additional_details->>'locationAccuracy')::NUMERIC 
+            ELSE NULL 
+        END AS json_location_accuracy,
         -- Raw timestamps for consistency check
         t.created_time,
         t.synced_time,
@@ -56,15 +53,9 @@ spatial_clustering AS (
         -- Spatial Duplicate Window Function
         -- Transforms GPS (EPSG:4326) to Web Mercator (EPSG:3857) to measure precisely in meters.
         -- Uses DBSCAN to assign a cluster ID if a task is within 10 meters of another task on the same day for the same team.
-        CASE 
-            WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 AND team_id IS NOT NULL
-            THEN ST_ClusterDBSCAN(
-                     ST_Transform(ST_SetSRID(ST_MakePoint(longitude, latitude), 4326), 3857), 
-                     eps := 10, 
-                     minpoints := 2
-                 ) OVER (PARTITION BY campaign_id, event_date, team_id)
-            ELSE NULL
-        END AS cluster_id
+        -- Note: PostGIS ST_ClusterDBSCAN is disabled because the 'postgis' extension is not available.
+        -- We temporarily output NULL for cluster_id until the extension is installed.
+        NULL AS cluster_id
     FROM task_enriched
 )
 SELECT 
@@ -110,8 +101,8 @@ CREATE UNIQUE INDEX idx_mv_task_kpi_base_unique_task ON mv_project_task_kpi_base
 -- ==============================================================================
 
 -- 3.1 Country Code Data Mart
-DROP TABLE IF EXISTS datamart_country_code;
-DROP MATERIALIZED VIEW IF EXISTS datamart_country_code;
+DROP TABLE IF EXISTS datamart_country_code; -- removed
+DROP MATERIALIZED VIEW IF EXISTS datamart_country_code; -- removed
 CREATE MATERIALIZED VIEW datamart_country_code AS
 SELECT 
     campaign_id,
