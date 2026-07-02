@@ -13,44 +13,50 @@
 
 CREATE MATERIALIZED VIEW dm_successful_deliveries_base AS
 SELECT
+    campaign_id,
     region_code,
     district_code,
-    healthfacility_code,
+    health_facility_code,
     settlement_code,
-    campaign_id,
     product_name,
     task_dates AS event_date,
     COUNT(*) AS total_vaccinated
 FROM project_task_enriched
 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
-GROUP BY region_code, district_code, healthfacility_code, settlement_code, campaign_id, product_name, task_dates;
+GROUP BY campaign_id, region_code, district_code, health_facility_code, settlement_code, product_name, task_dates;
 
 CREATE UNIQUE INDEX idx_sd_base_pk ON dm_successful_deliveries_base (
-    campaign_id, product_name, region_code, district_code, healthfacility_code, settlement_code, event_date
+    campaign_id, product_name, region_code, district_code, health_facility_code, settlement_code, event_date
 );
-CREATE INDEX idx_sd_base_date ON dm_successful_deliveries_base (event_date);
 CREATE INDEX idx_sd_base_camp_date ON dm_successful_deliveries_base (campaign_id, event_date DESC);
 
 
 
 
-CREATE MATERIALIZED VIEW dm_district_targets AS
+CREATE MATERIALIZED VIEW dm_targets_base AS
 SELECT
+    campaign_id,
+    target_type,
     region_code,
     district_code,
-    campaign_id,
+    health_facility_code,
+    settlement_code,
     product_name,
     SUM(overall_target) AS target_population,
     TO_TIMESTAMP(MIN(start_date) / 1000)::DATE AS start_date,
     TO_TIMESTAMP(MAX(end_date)   / 1000)::DATE AS end_date,
     MAX(campaign_duration_in_days) AS total_days
 FROM project_enriched
-WHERE district_code IS NOT NULL
+WHERE settlement_code IS NOT NULL
   AND start_date IS NOT NULL
   AND end_date IS NOT NULL
-GROUP BY region_code, district_code, campaign_id, product_name;
+GROUP BY campaign_id, target_type, region_code, district_code, health_facility_code, settlement_code, product_name;
 
-CREATE UNIQUE INDEX idx_district_targets_pk ON dm_district_targets (campaign_id, product_name, region_code, district_code);
+CREATE UNIQUE INDEX idx_targets_base_pk ON dm_targets_base (
+    campaign_id, target_type, product_name, region_code, district_code, health_facility_code, settlement_code
+);
+CREATE INDEX idx_targets_base_camp ON dm_targets_base (campaign_id, product_name);
+
 
 
 
@@ -66,7 +72,8 @@ WITH campaign_deliveries AS (
 ),
 campaign_targets_cte AS (
     SELECT campaign_id, product_name, SUM(target_population) AS target_population
-    FROM dm_district_targets
+    FROM dm_targets_base
+    WHERE target_type = 'INDIVIDUAL'
     GROUP BY campaign_id, product_name
 )
 SELECT
@@ -89,31 +96,31 @@ CREATE UNIQUE INDEX idx_campaign_coverage_pk ON dm_campaign_coverage (campaign_i
 
 CREATE MATERIALIZED VIEW dm_health_facility_status AS
 WITH target_hfs AS (
-    SELECT DISTINCT campaign_id, product_name, region_code, district_code, healthfacility_code
-    FROM project_enriched
-    WHERE healthfacility_code IS NOT NULL
+    SELECT DISTINCT campaign_id, product_name, region_code, district_code, health_facility_code
+    FROM dm_targets_base
+    WHERE target_type = 'INDIVIDUAL'
+      AND health_facility_code IS NOT NULL
 ),
 delivered_hfs AS (
-    SELECT DISTINCT campaign_id, product_name, region_code, district_code, healthfacility_code
-    FROM project_task_enriched
-    WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
-      AND healthfacility_code IS NOT NULL
+    SELECT DISTINCT campaign_id, product_name, region_code, district_code, health_facility_code
+    FROM dm_successful_deliveries_base
+    WHERE health_facility_code IS NOT NULL
 )
 SELECT 
     COALESCE(t.campaign_id, d.campaign_id) AS campaign_id,
     COALESCE(t.product_name, d.product_name) AS product_name,
     COALESCE(t.region_code, d.region_code) AS region_code,
     COALESCE(t.district_code, d.district_code) AS district_code,
-    COALESCE(t.healthfacility_code, d.healthfacility_code) AS healthfacility_code,
-    CASE WHEN t.healthfacility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_targeted,
-    CASE WHEN d.healthfacility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_delivered
+    COALESCE(t.health_facility_code, d.health_facility_code) AS health_facility_code,
+    CASE WHEN t.health_facility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_targeted,
+    CASE WHEN d.health_facility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_delivered
 FROM target_hfs t
 FULL OUTER JOIN delivered_hfs d 
     ON t.campaign_id = d.campaign_id 
    AND t.product_name = d.product_name
-   AND t.healthfacility_code = d.healthfacility_code;
+   AND t.health_facility_code = d.health_facility_code;
 
-CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, product_name, healthfacility_code);
+CREATE UNIQUE INDEX idx_hf_status_pk ON dm_health_facility_status (campaign_id, product_name, health_facility_code);
 CREATE INDEX idx_hf_status_inactive ON dm_health_facility_status (campaign_id, product_name) WHERE is_targeted = TRUE AND is_delivered = FALSE;
 -- Geographic drill-down optimization tuples for KPIs 3 & 4
 
@@ -133,12 +140,10 @@ CREATE MATERIALIZED VIEW dm_campaign_forecast AS
 WITH campaign_dimensions AS (
     SELECT
         campaign_id,
-        TO_TIMESTAMP(MIN(start_date) / 1000)::DATE AS start_date,
-        TO_TIMESTAMP(MAX(end_date) / 1000)::DATE   AS end_date,
-        MAX(campaign_duration_in_days)             AS total_days
-    FROM project_enriched
-    WHERE start_date IS NOT NULL
-      AND end_date   IS NOT NULL
+        MIN(start_date) AS start_date,
+        MAX(end_date)   AS end_date,
+        MAX(total_days) AS total_days
+    FROM dm_targets_base
     GROUP BY campaign_id
 ),
 campaign_stats AS (
@@ -186,6 +191,20 @@ WITH district_deliveries AS (
     FROM dm_successful_deliveries_base
     GROUP BY region_code, district_code, campaign_id, product_name
 ),
+district_targets_cte AS (
+    SELECT
+        campaign_id,
+        region_code,
+        district_code,
+        product_name,
+        SUM(target_population) AS target_population,
+        MIN(start_date) AS start_date,
+        MAX(end_date)   AS end_date,
+        MAX(total_days) AS total_days
+    FROM dm_targets_base
+    WHERE target_type = 'INDIVIDUAL'
+    GROUP BY campaign_id, region_code, district_code, product_name
+),
 district_metrics AS (
     SELECT
         dt.region_code,
@@ -199,7 +218,7 @@ district_metrics AS (
         dt.end_date   AS campaign_end_date,
         dt.total_days AS total_campaign_days,
         LEAST(GREATEST((CURRENT_DATE - dt.start_date) + 1, 1), dt.total_days) AS days_elapsed
-    FROM dm_district_targets dt
+    FROM district_targets_cte dt
     LEFT JOIN district_deliveries dd
         ON dd.region_code   = dt.region_code
        AND dd.district_code = dt.district_code
@@ -213,9 +232,9 @@ district_metrics_computed AS (
     FROM district_metrics
 )
 SELECT
+    campaign_id,
     region_code,
     district_code,
-    campaign_id,
     product_name,
     delivery_count,
     target_population,
@@ -246,7 +265,7 @@ CREATE INDEX idx_dist_perf_coverage ON dm_district_performance (campaign_id, act
 SELECT campaign_id, product_name, SUM(total_vaccinated) AS total_vaccinated FROM dm_successful_deliveries_base WHERE campaign_id = :campaign_id AND product_name = :product_name GROUP BY campaign_id, product_name;
 SELECT region_code, product_name, SUM(total_vaccinated) AS total_vaccinated FROM dm_successful_deliveries_base WHERE campaign_id = :campaign_id AND product_name = :product_name GROUP BY region_code, product_name ORDER BY total_vaccinated DESC;
 SELECT district_code, product_name, SUM(total_vaccinated) AS total_vaccinated FROM dm_successful_deliveries_base WHERE region_code = :region_code AND campaign_id = :campaign_id AND product_name = :product_name GROUP BY district_code, product_name ORDER BY total_vaccinated DESC;
-SELECT healthfacility_code, product_name, SUM(total_vaccinated) AS total_vaccinated FROM dm_successful_deliveries_base WHERE district_code = :district_code AND campaign_id = :campaign_id AND product_name = :product_name GROUP BY healthfacility_code, product_name ORDER BY total_vaccinated DESC;
+SELECT health_facility_code, product_name, SUM(total_vaccinated) AS total_vaccinated FROM dm_successful_deliveries_base WHERE district_code = :district_code AND campaign_id = :campaign_id AND product_name = :product_name GROUP BY health_facility_code, product_name ORDER BY total_vaccinated DESC;
 
 -- KPI 2: Overall Coverage Rate
 SELECT campaign_id, product_name, total_vaccinated, target_population, coverage_percentage FROM dm_campaign_coverage WHERE campaign_id = :campaign_id AND product_name = :product_name;
@@ -255,34 +274,34 @@ SELECT campaign_id, product_name, coverage_percentage, total_vaccinated, target_
 -- KPI 3 & 4: Health Facility Coverage Rate & Hierarchy (Dynamic)
 -- Campaign overall
 SELECT campaign_id, product_name, 
-       COUNT(healthfacility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
-       COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
-       ROUND(COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(healthfacility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
+       COUNT(health_facility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
+       COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
+       ROUND(COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(health_facility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
 FROM dm_health_facility_status WHERE campaign_id = :campaign_id AND product_name = :product_name GROUP BY campaign_id, product_name;
 
 -- By Country
 SELECT product_name, 
-       COUNT(healthfacility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
-       COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
-       ROUND(COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(healthfacility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
+       COUNT(health_facility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
+       COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
+       ROUND(COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(health_facility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
 FROM dm_health_facility_status WHERE campaign_id = :campaign_id AND product_name = :product_name GROUP BY product_name;
 
 -- By Province
 SELECT region_code, product_name, 
-       COUNT(healthfacility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
-       COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
-       ROUND(COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(healthfacility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
+       COUNT(health_facility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
+       COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
+       ROUND(COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(health_facility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
 FROM dm_health_facility_status WHERE campaign_id = :campaign_id AND product_name = :product_name GROUP BY region_code, product_name ORDER BY coverage_percentage DESC;
 
 -- By District
 SELECT district_code, product_name, 
-       COUNT(healthfacility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
-       COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
-       ROUND(COUNT(healthfacility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(healthfacility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
+       COUNT(health_facility_code) FILTER (WHERE is_targeted) AS target_health_facilities,
+       COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted) AS covered_health_facilities,
+       ROUND(COUNT(health_facility_code) FILTER (WHERE is_delivered AND is_targeted)::NUMERIC / NULLIF(COUNT(health_facility_code) FILTER (WHERE is_targeted), 0) * 100, 2) AS coverage_percentage
 FROM dm_health_facility_status WHERE region_code = :region_code AND campaign_id = :campaign_id AND product_name = :product_name GROUP BY district_code, product_name ORDER BY coverage_percentage DESC;
 
 -- KPI 3B: Inactive Health Facilities
-SELECT healthfacility_code, product_name FROM dm_health_facility_status WHERE campaign_id = :campaign_id AND product_name = :product_name AND is_targeted = TRUE AND is_delivered = FALSE;
+SELECT health_facility_code, product_name FROM dm_health_facility_status WHERE campaign_id = :campaign_id AND product_name = :product_name AND is_targeted = TRUE AND is_delivered = FALSE;
 
 
 -- KPI 5: Daily Coverage Rate (Dynamic - Skip Holidays)
@@ -337,6 +356,7 @@ SELECT district_code, region_code, actual_coverage, expected_coverage FROM dm_di
 
 -- STEP 1: Independent base marts
 REFRESH MATERIALIZED VIEW CONCURRENTLY dm_successful_deliveries_base;
+REFRESH MATERIALIZED VIEW CONCURRENTLY dm_targets_base;
 
 
 
