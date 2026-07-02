@@ -6,37 +6,37 @@
 -- ---------------------------------------------------------------
 
 CREATE MATERIALIZED VIEW dm_beneficiary_status_base AS -- For each beneficiary we check if he/she ever be refused or absent 
+WITH ben_level AS (
+    SELECT 
+        pb.campaign_id, pb.region_code, pb.district_code, pb.healthfacility_code, pb.settlement_code, pb.beneficiary_id,
+        MAX(CASE WHEN t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'REFUSED' THEN 1 ELSE 0 END) AS is_refused, -- being used in the KPI 2 (Refusal Rate) 
+        MAX(CASE WHEN (t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'ABSENCE') OR t.administration_status = 'CLOSED_HOUSEHOLD' THEN 1 ELSE 0 END) AS is_absent, -- being used in the KPI 3 (Absence )
+        CASE 
+            WHEN COUNT(*) > 1 
+             AND COUNT(*) FILTER (WHERE t.administration_status = 'VISITED') = 0 
+             AND COUNT(*) FILTER (WHERE t.administration_status = 'ADMINISTRATION_SUCCESS') = 0 
+            THEN 1 ELSE 0 
+        END AS is_multi_unsuccessful -- being used in the KPI 9 (Multi-Unsuccessful)
+    FROM project_beneficiary_enriched pb
+             JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id
+    GROUP BY pb.campaign_id, pb.region_code, pb.district_code, pb.healthfacility_code, pb.settlement_code, pb.beneficiary_id
+)
 SELECT 
-    pb.campaign_id,
-    pb.country_code,
-    pb.region_code,
-    pb.district_code,
-    pb.healthfacility_code,
-    pb.settlement_code,
-    pb.beneficiary_id,
-    MAX(CASE WHEN t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'REFUSED' THEN 1 ELSE 0 END) AS is_refused, -- being used in the KPI 2 (Refusal Rate) 
-    MAX(CASE WHEN (t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'ABSENCE') OR t.administration_status = 'CLOSED_HOUSEHOLD' THEN 1 ELSE 0 END) AS is_absent, -- being used in the KPI 3 (Absence )
-    CASE 
-        WHEN COUNT(*) > 1 
-         AND COUNT(*) FILTER (WHERE t.administration_status = 'VISITED') = 0 
-         AND COUNT(*) FILTER (WHERE t.administration_status = 'ADMINISTRATION_SUCCESS') = 0 
-        THEN 1 ELSE 0 
-    END AS is_multi_unsuccessful -- being used in the KPI 9 (Multi-Unsuccessful)
-FROM project_beneficiary_enriched pb
-         JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id
-GROUP BY pb.campaign_id, pb.country_code, pb.region_code, pb.district_code, pb.healthfacility_code, pb.settlement_code, pb.beneficiary_id;
+    campaign_id, region_code, district_code, healthfacility_code, settlement_code,
+    SUM(is_refused) AS refused_beneficiaries,
+    SUM(is_absent) AS absent_beneficiaries,
+    SUM(is_multi_unsuccessful) AS multi_unsuccessful_beneficiaries,
+    COUNT(beneficiary_id) AS total_beneficiaries
+FROM ben_level
+GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code;
 
 CREATE UNIQUE INDEX idx_dm_beneficiary_status_base ON dm_beneficiary_status_base (
-    campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, beneficiary_id
+    campaign_id, region_code, district_code, healthfacility_code, settlement_code
 );
 
 
 
--- Indexes to optimize dynamic geographic filtering for KPIs 2, 3, and 9
-CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_province ON dm_beneficiary_status_base (campaign_id, region_code); -- Used by the 2nd query in KPIs 2, 3, 9
-CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_district ON dm_beneficiary_status_base (campaign_id, district_code); -- Used by the 3rd query in KPIs 2, 3, 9
-CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_hc ON dm_beneficiary_status_base (campaign_id, healthfacility_code); -- Used by the 4th query in KPIs 2, 3, 9
-CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_village ON dm_beneficiary_status_base (campaign_id, settlement_code); -- Used if drilling down to settlement level
+-- Indices removed based on audit report (redundant to UNIQUE INDEX)
 
 -- Note: The raw table indexes (idx_raw_ben_campaign_...) were deleted here because our recent optimization made KPI 9 use the base mart instead!
 -- ================================================================
@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_ben_status_campaign_village ON dm_beneficiary_sta
 
 CREATE MATERIALIZED VIEW dm_task_status_base AS -- aggregation for different fields required by KPI's 
 SELECT
-    t.campaign_id, t.country_code, t.region_code, t.district_code, t.healthfacility_code, t.settlement_code,
+    t.campaign_id, t.region_code, t.district_code, t.healthfacility_code, t.settlement_code,
     COUNT(*) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED')) AS failed_visit_count, -- being used in the KPI 1 (Failed Visit Count )
     COUNT(*) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED', 'VISITED')) - COUNT(DISTINCT pb.beneficiary_id) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED')) AS total_revisit_records, -- being used in the KPI 8 (Revisit Success Rate) 
     COUNT(*) FILTER (WHERE t.administration_status = 'VISITED') AS revisit_successful_count, -- being used in the KPI 8 (Revisit Success Rate) 
@@ -52,34 +52,51 @@ SELECT
     COUNT(*) AS total_records
 FROM project_task_enriched t    
          LEFT JOIN project_beneficiary_enriched pb ON t.project_beneficiary_client_reference_id = pb.client_reference_id
-GROUP BY t.campaign_id, t.country_code, t.region_code, t.district_code, t.healthfacility_code, t.settlement_code;
+GROUP BY t.campaign_id, t.region_code, t.district_code, t.healthfacility_code, t.settlement_code;
 
-CREATE UNIQUE INDEX idx_dm_task_status_base ON dm_task_status_base (campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code);
--- Indices to optimize dynamic geographic filtering with skipped hierarchy
-CREATE INDEX IF NOT EXISTS idx_task_status_camp_province ON dm_task_status_base (campaign_id, region_code);
-CREATE INDEX IF NOT EXISTS idx_task_status_camp_district ON dm_task_status_base (campaign_id, district_code);
-CREATE INDEX IF NOT EXISTS idx_task_status_camp_hc ON dm_task_status_base (campaign_id, healthfacility_code);
+CREATE UNIQUE INDEX idx_dm_task_status_base ON dm_task_status_base (campaign_id, region_code, district_code, healthfacility_code, settlement_code);
+-- Indices removed based on audit report (redundant to UNIQUE INDEX)
 -- Unique is used for concurrent refreshing
-CREATE MATERIALIZED VIEW dm_task_breakdown_base AS
+CREATE MATERIALIZED VIEW dm_refusal_breakdown AS
 SELECT
-    campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code, 
+    campaign_id, region_code, district_code, healthfacility_code, settlement_code, 
     COALESCE(additional_details ->> 'refusalReason', 'Unknown') AS refusal_reason,
+    COUNT(*) AS refusal_count
+FROM project_task_enriched
+WHERE administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'REFUSED'
+GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code,
+         COALESCE(additional_details ->> 'refusalReason', 'Unknown');
+
+CREATE UNIQUE INDEX idx_dm_refusal_breakdown ON dm_refusal_breakdown (campaign_id, region_code, district_code, healthfacility_code, settlement_code, refusal_reason);
+
+CREATE MATERIALIZED VIEW dm_absence_breakdown AS
+SELECT
+    campaign_id, region_code, district_code, healthfacility_code, settlement_code, 
     CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END AS absence_category,
+    COUNT(*) AS absence_count
+FROM project_task_enriched
+WHERE (administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'ABSENCE') OR administration_status = 'CLOSED_HOUSEHOLD'
+GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code,
+         CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END;
+
+CREATE UNIQUE INDEX idx_dm_absence_breakdown ON dm_absence_breakdown (campaign_id, region_code, district_code, healthfacility_code, settlement_code, absence_category);
+
+CREATE MATERIALIZED VIEW dm_settlement_refusal_rate AS
+SELECT
+    campaign_id, region_code, district_code, healthfacility_code, settlement_code, 
     COALESCE(additional_details ->> 'settlementType', 'Unknown') AS settlement_type,
     COUNT(*) FILTER (WHERE administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'REFUSED') AS refusal_count,
-    COUNT(*) FILTER (WHERE additional_details ->> 'reason' = 'ABSENCE' OR administration_status = 'CLOSED_HOUSEHOLD') AS absence_count,
     COUNT(*) AS total_records
 FROM project_task_enriched
-GROUP BY campaign_id, country_code, region_code, district_code, healthfacility_code, settlement_code,
-         COALESCE(additional_details ->> 'refusalReason', 'Unknown'), -- refusal reason breakdown (KPI 4)
-         CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END, -- absence reason breakdown (KPI 5)
+GROUP BY campaign_id, region_code, district_code, healthfacility_code, settlement_code,
+         COALESCE(additional_details ->> 'settlementType', 'Unknown');
 
--- ---------------------------------------------------------------
--- REFRESH STRATEGY (pg_cron)
--- ---------------------------------------------------------------
-/*
-SELECT cron.schedule('refresh_kpi_views', '*/30 * * * *', $$
-    -- 1. Refresh Base Marts
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_beneficiary_status_base;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_status_base;
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_breakdown_base;
+CREATE UNIQUE INDEX idx_dm_settlement_refusal_rate ON dm_settlement_refusal_rate (campaign_id, region_code, district_code, healthfacility_code, settlement_code, settlement_type);
+
+
+
+
+-- 1. Refresh Base Marts
+--REFRESH MATERIALIZED VIEW CONCURRENTLY dm_beneficiary_status_base;
+--REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_status_base;
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY dm_task_breakdown_base;
