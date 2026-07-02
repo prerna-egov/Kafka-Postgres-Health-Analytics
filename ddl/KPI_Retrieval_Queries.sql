@@ -31,7 +31,6 @@ WHERE campaign_id = :campaign_id;
 -- ================================================================
 --  KPI RETRIEVAL QUERIES FOR Reffusal
 -- ================================================================
-
 -- ---------------------------------------------------------------
 -- KPI 1: Failed Visit Count (Query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
@@ -45,19 +44,19 @@ SELECT healthfacility_code, SUM(failed_visit_count) AS failed_visit_count FROM d
 -- KPI 2: Refusal Rate (query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
 -- ---------------------------------------------------------------
-SELECT campaign_id, SUM(is_refused) AS refused_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_refused) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY campaign_id;
-SELECT region_code, SUM(is_refused) AS refused_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_refused) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY region_code ORDER BY refusal_rate_pct DESC;
-SELECT district_code, SUM(is_refused) AS refused_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_refused) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE region_code = :region_code AND campaign_id = :campaign_id GROUP BY district_code ORDER BY refusal_rate_pct DESC;
-SELECT healthfacility_code, SUM(is_refused) AS refused_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_refused) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE district_code = :district_code AND campaign_id = :campaign_id GROUP BY healthfacility_code ORDER BY refusal_rate_pct DESC;
+SELECT campaign_id, SUM(refused_beneficiaries) AS refused_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(refused_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY campaign_id;
+SELECT region_code, SUM(refused_beneficiaries) AS refused_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(refused_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY region_code ORDER BY refusal_rate_pct DESC;
+SELECT district_code, SUM(refused_beneficiaries) AS refused_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(refused_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE region_code = :region_code AND campaign_id = :campaign_id GROUP BY district_code ORDER BY refusal_rate_pct DESC;
+SELECT healthfacility_code, SUM(refused_beneficiaries) AS refused_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(refused_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS refusal_rate_pct FROM dm_beneficiary_status_base WHERE district_code = :district_code AND campaign_id = :campaign_id GROUP BY healthfacility_code ORDER BY refusal_rate_pct DESC;
 
 -- ---------------------------------------------------------------
 -- KPI 3: Absence Rate (query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
 -- ---------------------------------------------------------------
-SELECT campaign_id, SUM(is_absent) AS absent_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_absent) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY campaign_id;
-SELECT region_code, SUM(is_absent) AS absent_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_absent) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY region_code ORDER BY absence_rate_pct DESC;
-SELECT district_code, SUM(is_absent) AS absent_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_absent) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE region_code = :region_code AND campaign_id = :campaign_id GROUP BY district_code ORDER BY absence_rate_pct DESC;
-SELECT healthfacility_code, SUM(is_absent) AS absent_beneficiaries, COUNT(beneficiary_id) AS total_beneficiaries, ROUND(SUM(is_absent) * 100.0 / NULLIF(COUNT(beneficiary_id), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE district_code = :district_code AND campaign_id = :campaign_id GROUP BY healthfacility_code ORDER BY absence_rate_pct DESC;
+SELECT campaign_id, SUM(absent_beneficiaries) AS absent_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(absent_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY campaign_id;
+SELECT region_code, SUM(absent_beneficiaries) AS absent_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(absent_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY region_code ORDER BY absence_rate_pct DESC;
+SELECT district_code, SUM(absent_beneficiaries) AS absent_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(absent_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE region_code = :region_code AND campaign_id = :campaign_id GROUP BY district_code ORDER BY absence_rate_pct DESC;
+SELECT healthfacility_code, SUM(absent_beneficiaries) AS absent_beneficiaries, SUM(total_beneficiaries) AS total_beneficiaries, ROUND(SUM(absent_beneficiaries) * 100.0 / NULLIF(SUM(total_beneficiaries), 0), 2) AS absence_rate_pct FROM dm_beneficiary_status_base WHERE district_code = :district_code AND campaign_id = :campaign_id GROUP BY healthfacility_code ORDER BY absence_rate_pct DESC;
 
 -- ---------------------------------------------------------------
 -- KPI 4: Refusal Breakdown (query)
@@ -121,7 +120,6 @@ SELECT campaign_id, SUM(multi_unsuccessful_beneficiaries) AS multi_unsuccessful_
 SELECT region_code, SUM(multi_unsuccessful_beneficiaries) AS multi_unsuccessful_beneficiaries FROM dm_beneficiary_status_base WHERE campaign_id = :campaign_id GROUP BY region_code ORDER BY multi_unsuccessful_beneficiaries DESC;
 SELECT district_code, SUM(multi_unsuccessful_beneficiaries) AS multi_unsuccessful_beneficiaries FROM dm_beneficiary_status_base WHERE region_code = :region_code AND campaign_id = :campaign_id GROUP BY district_code ORDER BY multi_unsuccessful_beneficiaries DESC;
 SELECT healthfacility_code, SUM(multi_unsuccessful_beneficiaries) AS multi_unsuccessful_beneficiaries FROM dm_beneficiary_status_base WHERE district_code = :district_code AND campaign_id = :campaign_id GROUP BY healthfacility_code ORDER BY multi_unsuccessful_beneficiaries DESC;
-
 
 -- ==========================================================================
 -- SECTION: KPI RETRIEVAL QUERIES FOR Coverage
