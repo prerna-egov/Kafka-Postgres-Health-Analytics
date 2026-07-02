@@ -31,6 +31,7 @@ WHERE campaign_id = :campaign_id;
 -- ================================================================
 --  KPI RETRIEVAL QUERIES FOR Reffusal
 -- ================================================================
+
 -- ---------------------------------------------------------------
 -- KPI 1: Failed Visit Count (Query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
@@ -62,21 +63,21 @@ SELECT healthfacility_code, SUM(is_absent) AS absent_beneficiaries, COUNT(benefi
 -- KPI 4: Refusal Breakdown (query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
 -- ---------------------------------------------------------------
-SELECT campaign_id, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_task_breakdown_base WHERE campaign_id = :campaign_id AND refusal_count > 0 GROUP BY campaign_id, refusal_reason ORDER BY refusal_count DESC;
-SELECT region_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_task_breakdown_base WHERE campaign_id = :campaign_id AND refusal_count > 0 GROUP BY region_code, refusal_reason ORDER BY refusal_count DESC;
-SELECT district_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_task_breakdown_base WHERE region_code = :region_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY district_code, refusal_reason ORDER BY refusal_count DESC;
-SELECT healthfacility_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_task_breakdown_base WHERE district_code = :district_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY healthfacility_code, refusal_reason ORDER BY refusal_count DESC;
-SELECT  refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_task_breakdown_base WHERE healthfacility_code = :healthfacility_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY  refusal_reason ORDER BY refusal_count DESC;
+SELECT campaign_id, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_refusal_breakdown WHERE campaign_id = :campaign_id AND refusal_count > 0 GROUP BY campaign_id, refusal_reason ORDER BY refusal_count DESC;
+SELECT region_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_refusal_breakdown WHERE campaign_id = :campaign_id AND refusal_count > 0 GROUP BY region_code, refusal_reason ORDER BY refusal_count DESC;
+SELECT district_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_refusal_breakdown WHERE region_code = :region_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY district_code, refusal_reason ORDER BY refusal_count DESC;
+SELECT healthfacility_code, refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_refusal_breakdown WHERE district_code = :district_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY healthfacility_code, refusal_reason ORDER BY refusal_count DESC;
+SELECT  refusal_reason, SUM(refusal_count) AS refusal_count FROM dm_refusal_breakdown WHERE healthfacility_code = :healthfacility_code AND campaign_id = :campaign_id AND refusal_count > 0 GROUP BY  refusal_reason ORDER BY refusal_count DESC;
 
 -- ---------------------------------------------------------------
 -- KPI 5: Absence Breakdown (query)
 -- Time Complexity: O(log N + K) (N = total rows, K = matching rows)
 -- ---------------------------------------------------------------
-SELECT campaign_id, absence_category, SUM(absence_count) AS absence_count FROM dm_task_breakdown_base WHERE campaign_id = :campaign_id AND absence_count > 0 GROUP BY campaign_id, absence_category ORDER BY absence_count DESC;
-SELECT region_code, absence_category, SUM(absence_count) AS absence_count FROM dm_task_breakdown_base WHERE campaign_id = :campaign_id AND absence_count > 0 GROUP BY region_code, absence_category ORDER BY absence_count DESC;
-SELECT district_code, absence_category, SUM(absence_count) AS absence_count FROM dm_task_breakdown_base WHERE region_code = :region_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY district_code, absence_category ORDER BY absence_count DESC;
-SELECT healthfacility_code, absence_category, SUM(absence_count) AS absence_count FROM dm_task_breakdown_base WHERE district_code = :district_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY healthfacility_code, absence_category ORDER BY absence_count DESC;
-SELECT  absence_category, SUM(absence_count) AS absence_count FROM dm_task_breakdown_base WHERE healthfacility_code = :healthfacility_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY  absence_category ORDER BY absence_count DESC;
+SELECT campaign_id, absence_category, SUM(absence_count) AS absence_count FROM dm_absence_breakdown WHERE campaign_id = :campaign_id AND absence_count > 0 GROUP BY campaign_id, absence_category ORDER BY absence_count DESC;
+SELECT region_code, absence_category, SUM(absence_count) AS absence_count FROM dm_absence_breakdown WHERE campaign_id = :campaign_id AND absence_count > 0 GROUP BY region_code, absence_category ORDER BY absence_count DESC;
+SELECT district_code, absence_category, SUM(absence_count) AS absence_count FROM dm_absence_breakdown WHERE region_code = :region_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY district_code, absence_category ORDER BY absence_count DESC;
+SELECT healthfacility_code, absence_category, SUM(absence_count) AS absence_count FROM dm_absence_breakdown WHERE district_code = :district_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY healthfacility_code, absence_category ORDER BY absence_count DESC;
+SELECT  absence_category, SUM(absence_count) AS absence_count FROM dm_absence_breakdown WHERE healthfacility_code = :healthfacility_code AND campaign_id = :campaign_id AND absence_count > 0 GROUP BY  absence_category ORDER BY absence_count DESC;
 
 -- ---------------------------------------------------------------
 -- KPI 6: Refusal Rate by District (Query)
