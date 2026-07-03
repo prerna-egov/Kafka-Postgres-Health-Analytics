@@ -91,7 +91,7 @@ SELECT
     tp.task_date,
     SUM(tp.total_submissions) AS submissions_per_day
 FROM dm_team_performance_base tp
-JOIN project_enriched p ON tp.project_id = p.id
+JOIN project_enriched p ON tp.project_id = p.id AND p.settlement_code IS NOT NULL
 WHERE (EXTRACT(EPOCH FROM tp.task_date) * 1000)::BIGINT BETWEEN p.start_date AND p.end_date
 GROUP BY tp.campaign_number, tp.team_id, tp.task_date;
 
