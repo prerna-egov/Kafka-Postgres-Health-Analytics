@@ -855,7 +855,7 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     -- ==========================================
     -- DOWNSTREAM FIELDS (From StockIndexV1.java)
     -- ==========================================
-    id                                VARCHAR(64),
+    id                                VARCHAR(64)    PRIMARY KEY,
     facility_id                       VARCHAR(64),
     transacting_facility_id           VARCHAR(64),
     facility_name                     VARCHAR(256),
