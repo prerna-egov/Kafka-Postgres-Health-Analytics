@@ -5,16 +5,18 @@
 CREATE MATERIALIZED VIEW mv_project_task_kpi_base AS
 WITH campaign_dates AS (
     SELECT
+        tenant_id,
         campaign_number,
         MIN(start_date) AS start_date,
         MAX(end_date)   AS end_date,
         MAX(total_days) AS campaign_duration_in_days
     FROM dm_targets_base
-    GROUP BY campaign_number
+    GROUP BY tenant_id, campaign_number
 ),
 task_enriched AS (
-    SELECT 
+    SELECT
         t.id AS task_id,
+        t.tenant_id,
         t.campaign_number,
         t.country_code,
         t.healthfacility_code,
@@ -38,11 +40,13 @@ task_enriched AS (
     FROM project_task_enriched t
     LEFT JOIN project_beneficiary_enriched b
         ON t.project_beneficiary_client_reference_id = b.client_reference_id
+       AND t.tenant_id = b.tenant_id
     LEFT JOIN campaign_dates cd
         ON t.campaign_number = cd.campaign_number
+       AND t.tenant_id = cd.tenant_id
 ),
 spatial_clustering AS (
-    SELECT 
+    SELECT
         *,
         -- Spatial Duplicate Window Function
         -- Transforms GPS (EPSG:4326) to Web Mercator (EPSG:3857) to measure precisely in meters.
@@ -52,8 +56,9 @@ spatial_clustering AS (
         NULL AS cluster_id
     FROM task_enriched
 )
-SELECT 
+SELECT
     task_id,
+    tenant_id,
     campaign_number,
     country_code,
     healthfacility_code,
@@ -70,10 +75,10 @@ SELECT
     project_end_date,
     campaign_duration_in_days,
     -- KPI 4 Duplicate Detection Logic
-    CASE 
+    CASE
         -- Condition 1: Same beneficiary_id appears more than once IN THE SAME CAMPAIGN
-        WHEN beneficiary_id IS NOT NULL 
-             AND COUNT(beneficiary_id) OVER (PARTITION BY campaign_number, beneficiary_id) > 1 
+        WHEN beneficiary_id IS NOT NULL
+             AND COUNT(beneficiary_id) OVER (PARTITION BY tenant_id, campaign_number, beneficiary_id) > 1
         THEN 1
         -- Condition 2: Task belongs to a 10m spatial cluster for that day/team
         WHEN cluster_id IS NOT NULL 
@@ -87,6 +92,7 @@ FROM spatial_clustering;
 -- ==============================================================================
 -- Unique index enables REFRESH MATERIALIZED VIEW CONCURRENTLY without blocking dashboard reads
 CREATE UNIQUE INDEX idx_mv_task_kpi_base_unique_task ON mv_project_task_kpi_base (task_id);
+CREATE INDEX idx_mv_task_kpi_base_tenant ON mv_project_task_kpi_base (tenant_id, campaign_number);
 
 
 
@@ -98,7 +104,8 @@ CREATE UNIQUE INDEX idx_mv_task_kpi_base_unique_task ON mv_project_task_kpi_base
 DROP TABLE IF EXISTS datamart_country_code; -- removed
 DROP MATERIALIZED VIEW IF EXISTS datamart_country_code; -- removed
 CREATE MATERIALIZED VIEW datamart_country_code AS
-SELECT 
+SELECT
+    tenant_id,
     campaign_number,
     country_code AS boundary_hierarchy_code,
     
@@ -119,15 +126,19 @@ SELECT
     SUM(is_duplicate) * 100.0 / NULLIF(COUNT(*), 0) AS duplicate_percentage
     
 FROM mv_project_task_kpi_base
-GROUP BY 
-    campaign_number, 
+GROUP BY
+    tenant_id,
+    campaign_number,
     country_code;
+
+CREATE INDEX idx_datamart_country_code_tenant ON datamart_country_code (tenant_id, campaign_number);
 
 -- 3.2 Health Center Code Data Mart
 DROP TABLE IF EXISTS datamart_healthfacility_code;
 DROP MATERIALIZED VIEW IF EXISTS datamart_healthfacility_code;
 CREATE MATERIALIZED VIEW datamart_healthfacility_code AS
-SELECT 
+SELECT
+    tenant_id,
     campaign_number,
     healthfacility_code AS boundary_hierarchy_code,
     COUNT(CASE WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS gps_coverage_percentage,
@@ -139,15 +150,19 @@ SELECT
     MAX(campaign_duration_in_days) AS campaign_duration_days,
     SUM(is_duplicate) * 100.0 / NULLIF(COUNT(*), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
-GROUP BY 
-    campaign_number, 
+GROUP BY
+    tenant_id,
+    campaign_number,
     healthfacility_code;
+
+CREATE INDEX idx_datamart_healthfacility_code_tenant ON datamart_healthfacility_code (tenant_id, campaign_number);
 
 -- 3.3 Region Code Data Mart
 DROP TABLE IF EXISTS datamart_region_code;
 DROP MATERIALIZED VIEW IF EXISTS datamart_region_code;
 CREATE MATERIALIZED VIEW datamart_region_code AS
-SELECT 
+SELECT
+    tenant_id,
     campaign_number,
     region_code AS boundary_hierarchy_code,
     COUNT(CASE WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS gps_coverage_percentage,
@@ -159,15 +174,19 @@ SELECT
     MAX(campaign_duration_in_days) AS campaign_duration_days,
     SUM(is_duplicate) * 100.0 / NULLIF(COUNT(*), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
-GROUP BY 
-    campaign_number, 
+GROUP BY
+    tenant_id,
+    campaign_number,
     region_code;
+
+CREATE INDEX idx_datamart_region_code_tenant ON datamart_region_code (tenant_id, campaign_number);
 
 -- 3.4 District Code Data Mart
 DROP TABLE IF EXISTS datamart_district_code;
 DROP MATERIALIZED VIEW IF EXISTS datamart_district_code;
 CREATE MATERIALIZED VIEW datamart_district_code AS
-SELECT 
+SELECT
+    tenant_id,
     campaign_number,
     district_code AS boundary_hierarchy_code,
     COUNT(CASE WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS gps_coverage_percentage,
@@ -179,15 +198,19 @@ SELECT
     MAX(campaign_duration_in_days) AS campaign_duration_days,
     SUM(is_duplicate) * 100.0 / NULLIF(COUNT(*), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
-GROUP BY 
-    campaign_number, 
+GROUP BY
+    tenant_id,
+    campaign_number,
     district_code;
+
+CREATE INDEX idx_datamart_district_code_tenant ON datamart_district_code (tenant_id, campaign_number);
 
 -- 3.5 Settlement Code Data Mart
 DROP TABLE IF EXISTS datamart_settlement_code;
 DROP MATERIALIZED VIEW IF EXISTS datamart_settlement_code;
 CREATE MATERIALIZED VIEW datamart_settlement_code AS
-SELECT 
+SELECT
+    tenant_id,
     campaign_number,
     settlement_code AS boundary_hierarchy_code,
     COUNT(CASE WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS gps_coverage_percentage,
@@ -199,6 +222,9 @@ SELECT
     MAX(campaign_duration_in_days) AS campaign_duration_days,
     SUM(is_duplicate) * 100.0 / NULLIF(COUNT(*), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
-GROUP BY 
-    campaign_number, 
+GROUP BY
+    tenant_id,
+    campaign_number,
     settlement_code;
+
+CREATE INDEX idx_datamart_settlement_code_tenant ON datamart_settlement_code (tenant_id, campaign_number);

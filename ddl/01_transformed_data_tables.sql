@@ -47,11 +47,10 @@ CREATE TABLE IF NOT EXISTS household_enriched (
 
     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- Extracted from geoPoint List<Double>
     geo_point_lat                   DOUBLE PRECISION,
@@ -101,13 +100,12 @@ CREATE TABLE IF NOT EXISTS household_member_enriched (
 
     -- HouseholdMemberIndexV1 top-level fields
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     date_of_birth                           BIGINT,
     age                                     INTEGER,
@@ -165,13 +163,12 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_enriched (
 
     -- ProjectBeneficiaryIndexV1 top-level fields
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     user_name                               VARCHAR(180),
     name_of_user                            VARCHAR(250),
@@ -227,13 +224,12 @@ CREATE TABLE IF NOT EXISTS attendance_log_enriched (
     register_name                           VARCHAR(256),
     register_number                         VARCHAR(256),
 
-    -- Flattened Boundary Hierarchy Fields
-    country_code                            VARCHAR(128),
-    health_center_code                      VARCHAR(128),
-    spp_code                                VARCHAR(128),
-    province_code                           VARCHAR(128),
-    district_code                           VARCHAR(128),
-    village_code                            VARCHAR(128),
+     -- Flattened Boundary Hierarchy Fields
+    country_code                    VARCHAR(128),
+    region_code                   VARCHAR(128),
+    district_code                   VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- ==========================================
     -- EXTRA FIELDS (Inherited via ProjectInfo)
@@ -332,13 +328,12 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
     role                                    VARCHAR(128),
     user_address                            VARCHAR(440),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     task_dates                              DATE,
@@ -383,15 +378,12 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     task_dates                      JSONB,          -- Mapped from List<String>
     additional_details              JSONB,          -- Mapped from JsonNode
 
--- ==========================================
--- FLATTENED BOUNDARY HIERARCHY
--- ==========================================
+ -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- ==========================================
     -- EXTRA FIELDS (Inherited via ProjectInfo)
@@ -450,11 +442,10 @@ CREATE TABLE IF NOT EXISTS referral_enriched (
 
     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     facility_name                               VARCHAR(256),
     individual_id                               VARCHAR(64),
@@ -500,13 +491,12 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     user_name                       VARCHAR(180),
     role                            VARCHAR(128),             -- Distinct from userRoles above
 
--- Flattened Boundary Hierarchy Fields
+ -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     task_dates                      DATE,             -- Stored as String per Java model
@@ -548,13 +538,12 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     user_name                       VARCHAR(180),
     role                            VARCHAR(128),             -- Distinct from userRoles above
 
--- Flattened Boundary Hierarchy Fields
+ -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     task_dates                      DATE,             -- Stored as String per Java model
@@ -610,13 +599,12 @@ CREATE TABLE IF NOT EXISTS hf_referral_enriched (
     role                                VARCHAR(128),
     user_address                        VARCHAR(440),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     task_dates                          DATE,   -- Stored as String per Java model
     synced_date                         DATE,   -- Stored as String per Java model
@@ -678,13 +666,12 @@ CREATE TABLE IF NOT EXISTS bill_enriched (
     name_of_user                    VARCHAR(250),
     role                            VARCHAR(128),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -728,13 +715,12 @@ CREATE TABLE IF NOT EXISTS attendee_enriched (
     register_name                   VARCHAR(256),
     register_number                 VARCHAR(256),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- ==========================================
 -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -781,13 +767,12 @@ CREATE TABLE IF NOT EXISTS side_effect_enriched (
     date_of_birth                               BIGINT,
     age                                         INTEGER,
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     locality_code                               VARCHAR(256),
     individual_id                               VARCHAR(64),
@@ -847,13 +832,12 @@ CREATE TABLE IF NOT EXISTS muster_roll_enriched (
     name_of_user                    VARCHAR(250),
     role                            VARCHAR(128),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -871,7 +855,7 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     -- ==========================================
     -- DOWNSTREAM FIELDS (From StockIndexV1.java)
     -- ==========================================
-    id                                VARCHAR(64),
+    id                                VARCHAR(64)    PRIMARY KEY,
     facility_id                       VARCHAR(64),
     transacting_facility_id           VARCHAR(64),
     facility_name                     VARCHAR(256),
@@ -888,13 +872,12 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     date_of_entry                     BIGINT,
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     created_by                        VARCHAR(256),
@@ -957,13 +940,12 @@ CREATE TABLE IF NOT EXISTS attendance_staff_enriched (
     register_number                 VARCHAR(256),
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -993,13 +975,12 @@ CREATE TABLE IF NOT EXISTS service_task_enriched (
     user_address TEXT,
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
 
@@ -1080,13 +1061,12 @@ CREATE TABLE IF NOT EXISTS bill_detail_enriched (
     role                            VARCHAR(128),
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -1156,13 +1136,12 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
     -- Hierarchy & Location mappings
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     locality_code                   VARCHAR(256),
 
@@ -1229,13 +1208,12 @@ CREATE TABLE IF NOT EXISTS referral_service_task_enriched (
 
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -1264,7 +1242,7 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     -- ==========================================
     -- PRIMARY KEY
     -- ==========================================
-    id                              VARCHAR(128)    PRIMARY KEY,
+    id                              VARCHAR(128),
 
     -- ==========================================
     -- CORE METADATA & IDENTIFIERS
@@ -1292,13 +1270,12 @@ CREATE TABLE IF NOT EXISTS project_enriched (
 
 
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
 
     -- ==========================================
@@ -1348,13 +1325,12 @@ CREATE TABLE IF NOT EXISTS bill_report_enriched (
     name_of_user                    VARCHAR(250),
     role                            VARCHAR(128),
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- ==========================================
 -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -1425,13 +1401,12 @@ CREATE TABLE IF NOT EXISTS user_action_enriched (
     geo_latitude                    DOUBLE PRECISION,
     geo_longitude                   DOUBLE PRECISION,
 
-    -- Flattened Boundary Hierarchy Fields
+     -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- Complex JSONB Arrays & Objects
     additional_details              JSONB,          -- Mapped from ObjectNode (parsed fields)
@@ -1510,13 +1485,12 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     locality_code                           VARCHAR(256),
     geo_point                               JSONB,          -- List<Double> Array [lon, lat]
 
--- Flattened Boundary Hierarchy Fields
+ -- Flattened Boundary Hierarchy Fields
     country_code                    VARCHAR(128),
-    health_center_code              VARCHAR(128),
-    spp_code                        VARCHAR(128),
-    province_code                   VARCHAR(128),
+    region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
-    village_code                    VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
 
     -- ==========================================
 -- SYNC TELEMETRY
@@ -1542,3 +1516,53 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     campaign_id                             VARCHAR(128)
 
     );
+
+-- ==========================================================================
+-- INDEXES FOR DATA MARTS OPTIMIZATION
+-- ==========================================================================
+
+-- Optimizing the "Failed/Refused" Task Extraction
+CREATE INDEX idx_pt_enriched_failed_tasks 
+ON project_task_enriched (campaign_number, region_code, district_code, health_facility_code, settlement_code)
+WHERE administration_status IN ('ADMINISTRATION_FAILED', 'CLOSED_HOUSEHOLD');
+
+-- The Beneficiary-Task Relationship Join
+CREATE INDEX idx_pt_enriched_beneficiary_ref 
+ON project_task_enriched (project_beneficiary_client_reference_id);
+
+-- The Beneficiary Primary Key Join
+CREATE UNIQUE INDEX idx_pb_enriched_client_ref 
+ON project_beneficiary_enriched (client_reference_id);
+
+-- Household Boundary Grouping
+CREATE INDEX idx_hh_enriched_boundary 
+ON household_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+
+-- Household Member boundary  Grouping
+CREATE INDEX idx_hhm_enriched_boundary 
+ON household_member_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+
+-- Project Task boundary  Grouping
+CREATE INDEX idx_pt_enriched_boundary 
+ON project_task_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+
+-- project beneficiary boundary  grouping 
+CREATE INDEX idx_pb_enriched_boundary 
+ON project_beneficiary_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+
+-- Referral Service Task boundary  Grouping
+CREATE INDEX idx_ref_svc_task_boundary 
+ON referral_service_task_enriched (campaign_id, country_code, region_code, district_code, health_facility_code, settlement_code);
+
+-- Project Enriched Targeted Filtering
+CREATE INDEX idx_project_enriched_id_partial
+ON project_enriched (id)
+WHERE settlement_code IS NOT NULL;
+
+-- Temporal & Time-Series Extraction
+CREATE INDEX idx_pt_enriched_task_dates 
+ON project_task_enriched (campaign_number, task_dates);
+
+-- User Action Task boundary Grouping
+CREATE INDEX idx_user_action_boundary 
+ON user_action_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
