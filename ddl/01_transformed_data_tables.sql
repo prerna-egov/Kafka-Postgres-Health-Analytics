@@ -1534,24 +1534,24 @@ ON project_task_enriched (project_beneficiary_client_reference_id);
 CREATE UNIQUE INDEX idx_pb_enriched_client_ref 
 ON project_beneficiary_enriched (client_reference_id);
 
--- Household Geographic Grouping
-CREATE INDEX idx_hh_enriched_geo 
+-- Household Boundary Grouping
+CREATE INDEX idx_hh_enriched_boundary 
 ON household_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
--- Household Member Geographic Grouping
-CREATE INDEX idx_hhm_enriched_geo 
+-- Household Member boundary  Grouping
+CREATE INDEX idx_hhm_enriched_boundary 
 ON household_member_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
--- Project Task Geographic Grouping
-CREATE INDEX idx_pt_enriched_geo 
+-- Project Task boundary  Grouping
+CREATE INDEX idx_pt_enriched_boundary 
 ON project_task_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
--- project beneficiary Geographic grouping 
-CREATE INDEX idx_pb_enriched_geo 
+-- project beneficiary boundary  grouping 
+CREATE INDEX idx_pb_enriched_boundary 
 ON project_beneficiary_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
--- Referral Service Task Geographic Grouping
-CREATE INDEX idx_ref_svc_task_geo 
+-- Referral Service Task boundary  Grouping
+CREATE INDEX idx_ref_svc_task_boundary 
 ON referral_service_task_enriched (campaign_id, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- Project Enriched Targeted Filtering
@@ -1563,9 +1563,6 @@ WHERE settlement_code IS NOT NULL;
 CREATE INDEX idx_pt_enriched_task_dates 
 ON project_task_enriched (campaign_number, task_dates);
 
-CREATE INDEX idx_pt_enriched_synced_time 
-ON project_task_enriched (synced_time_stamp);
-
--- Telemetry & User Action Troubleshooting
-CREATE INDEX idx_user_action_telemetry 
-ON user_action_enriched (synced_time_stamp, action);
+-- User Action Task boundary Grouping
+CREATE INDEX idx_user_action_boundary 
+ON user_action_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
