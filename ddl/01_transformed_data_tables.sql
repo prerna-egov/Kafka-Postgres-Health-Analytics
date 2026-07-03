@@ -1242,7 +1242,7 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     -- ==========================================
     -- PRIMARY KEY
     -- ==========================================
-    id                              VARCHAR(128)    PRIMARY KEY,
+    id                              VARCHAR(128),
 
     -- ==========================================
     -- CORE METADATA & IDENTIFIERS
@@ -1516,3 +1516,20 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     campaign_id                             VARCHAR(128)
 
     );
+
+-- ==========================================================================
+-- INDEXES FOR DATA MARTS OPTIMIZATION
+-- ==========================================================================
+
+-- Optimizing the "Failed/Refused" Task Extraction
+CREATE INDEX idx_pt_enriched_failed_tasks 
+ON project_task_enriched (campaign_number, region_code, district_code)
+WHERE administration_status IN ('ADMINISTRATION_FAILED', 'CLOSED_HOUSEHOLD');
+
+-- The Beneficiary-Task Relationship Join
+CREATE INDEX idx_pt_enriched_beneficiary_ref 
+ON project_task_enriched (project_beneficiary_client_reference_id);
+
+-- The Beneficiary Primary Key Join
+CREATE UNIQUE INDEX idx_pb_enriched_client_ref 
+ON project_beneficiary_enriched (client_reference_id);
