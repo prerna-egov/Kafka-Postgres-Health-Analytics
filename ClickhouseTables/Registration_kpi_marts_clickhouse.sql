@@ -9,11 +9,12 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- 1. REGISTRATION METRICS BASE MART
 -- ==========================================================================
 CREATE MATERIALIZED VIEW dm_registration_metrics_base
-REFRESH EVERY 24 HOUR
+REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code, age_band, gender, settlement_type)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, age_band, gender, settlement_type)
 AS 
 SELECT
+    pb.tenant_id,
     pb.campaign_number, 
     pb.region_code, 
     pb.district_code, 
@@ -43,9 +44,10 @@ SELECT
 
 FROM project_beneficiary_enriched pb
 LEFT JOIN project_task_enriched pt 
-    ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
+    ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 WHERE pb.is_deleted = 0
 GROUP BY 
+    pb.tenant_id,
     pb.campaign_number, 
     pb.region_code, 
     pb.district_code, 
@@ -62,9 +64,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_household_metrics_base
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code)
 AS
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -74,6 +77,7 @@ SELECT
 FROM household_enriched
 WHERE is_deleted = 0
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
