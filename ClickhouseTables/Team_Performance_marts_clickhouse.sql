@@ -176,24 +176,24 @@ GROUP BY
 
 
 -- KPI 3: Submission Rate per Hour (Outliers)
-CREATE MATERIALIZED VIEW dm_team_submission_flags_village
-REFRESH EVERY 1 HOUR
-ENGINE = MergeTree()
-ORDER BY (tenant_id, campaign_number, team_id, task_date, hour)
-AS
-SELECT
-    tenant_id,
-    campaign_number,
-    user_name AS team_id,
-    task_dates AS task_date,
-    toHour(toDateTime(created_time / 1000)) AS hour,
-    count(id) AS hourly_submission_count,
-    if(count(id) > 100, 1, 0) AS is_outlier
-FROM project_task_enriched
-GROUP BY
-    tenant_id,
-    campaign_number,
-    user_name,
-    task_dates,
+-- CREATE MATERIALIZED VIEW dm_team_submission_flags_village
+-- REFRESH EVERY 1 HOUR
+-- ENGINE = MergeTree()
+-- ORDER BY (tenant_id, campaign_number, team_id, task_date, hour)
+-- AS
+-- SELECT
+--     tenant_id,
+--     campaign_number,
+--     user_name AS team_id,
+--     task_dates AS task_date,
+--     toHour(toDateTime(created_time / 1000)) AS hour,
+--     count(id) AS hourly_submission_count,
+--     if(count(id) > 100, 1, 0) AS is_outlier
+-- FROM project_task_enriched
+-- GROUP BY
+--     tenant_id,
+--     campaign_number,
+--     user_name,
+--     task_dates,
     hour;
 
