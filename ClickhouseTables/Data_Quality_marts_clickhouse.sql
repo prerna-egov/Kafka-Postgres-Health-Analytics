@@ -10,22 +10,24 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- ==============================================================================
 -- Depends on dm_targets_base (ClickhouseTables/coverage_kpi_marts_clickhouse.sql)
 CREATE MATERIALIZED VIEW mv_project_task_kpi_base
-REFRESH EVERY 24 HOUR
+REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, task_id)
+ORDER BY (tenant_id, campaign_number, task_id)
 AS
 WITH campaign_dates AS (
     SELECT
+        tenant_id,
         campaign_number,
         MIN(start_date) AS start_date,
         MAX(end_date)   AS end_date,
         MAX(total_days) AS campaign_duration_in_days
     FROM dm_targets_base
-    GROUP BY campaign_number
+    GROUP BY tenant_id, campaign_number
 ),
 task_enriched AS (
     SELECT 
         t.id AS task_id,
+        t.tenant_id,
         t.campaign_number,
         ifNull(nullIf(t.country_code, ''), 'Unknown') AS country_code,
         ifNull(nullIf(t.health_facility_code, ''), 'Unknown') AS health_facility_code,
@@ -46,11 +48,14 @@ task_enriched AS (
     FROM project_task_enriched t
     LEFT JOIN project_beneficiary_enriched b
         ON t.project_beneficiary_client_reference_id = b.client_reference_id
+       AND t.tenant_id = b.tenant_id
     LEFT JOIN campaign_dates cd
         ON t.campaign_number = cd.campaign_number
+       AND t.tenant_id = cd.tenant_id
 )
 SELECT 
     task_id,
+    tenant_id,
     campaign_number,
     country_code,
     health_facility_code,
@@ -68,7 +73,7 @@ SELECT
     campaign_duration_in_days,
     -- KPI 4 Duplicate Detection Logic
     multiIf(
-        beneficiary_id IS NOT NULL AND count() OVER (PARTITION BY campaign_number, beneficiary_id) > 1, 1,
+        beneficiary_id IS NOT NULL AND count() OVER (PARTITION BY tenant_id, campaign_number, beneficiary_id) > 1, 1,
         0
     ) AS is_duplicate
 FROM task_enriched;
@@ -81,9 +86,10 @@ FROM task_enriched;
 CREATE MATERIALIZED VIEW datamart_country_code
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, boundary_hierarchy_code)
+ORDER BY (tenant_id, campaign_number, boundary_hierarchy_code)
 AS
 SELECT 
+    tenant_id,
     campaign_number,
     country_code AS boundary_hierarchy_code,
     
@@ -101,16 +107,18 @@ SELECT
     
 FROM mv_project_task_kpi_base
 GROUP BY 
+    tenant_id,
     campaign_number, 
     country_code;
 
 -- 3.2 Health Center Code Data Mart
-CREATE MATERIALIZED VIEW datamart_healthfacility_code
+CREATE MATERIALIZED VIEW datamart_health_facility_code
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, boundary_hierarchy_code)
+ORDER BY (tenant_id, campaign_number, boundary_hierarchy_code)
 AS
 SELECT 
+    tenant_id,
     campaign_number,
     health_facility_code AS boundary_hierarchy_code,
     countIf(latitude >= -90 AND latitude <= 90 AND longitude >= -180 AND longitude <= 180) * 100.0 / nullIf(count(), 0) AS gps_coverage_percentage,
@@ -123,6 +131,7 @@ SELECT
     sum(is_duplicate) * 100.0 / nullIf(count(), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
 GROUP BY 
+    tenant_id,
     campaign_number, 
     health_facility_code;
 
@@ -130,9 +139,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW datamart_region_code
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, boundary_hierarchy_code)
+ORDER BY (tenant_id, campaign_number, boundary_hierarchy_code)
 AS
 SELECT 
+    tenant_id,
     campaign_number,
     region_code AS boundary_hierarchy_code,
     countIf(latitude >= -90 AND latitude <= 90 AND longitude >= -180 AND longitude <= 180) * 100.0 / nullIf(count(), 0) AS gps_coverage_percentage,
@@ -145,6 +155,7 @@ SELECT
     sum(is_duplicate) * 100.0 / nullIf(count(), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code;
 
@@ -152,9 +163,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW datamart_district_code
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, boundary_hierarchy_code)
+ORDER BY (tenant_id, campaign_number, boundary_hierarchy_code)
 AS
 SELECT 
+    tenant_id,
     campaign_number,
     district_code AS boundary_hierarchy_code,
     countIf(latitude >= -90 AND latitude <= 90 AND longitude >= -180 AND longitude <= 180) * 100.0 / nullIf(count(), 0) AS gps_coverage_percentage,
@@ -167,6 +179,7 @@ SELECT
     sum(is_duplicate) * 100.0 / nullIf(count(), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
 GROUP BY 
+    tenant_id,
     campaign_number, 
     district_code;
 
@@ -174,9 +187,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW datamart_settlement_code
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, boundary_hierarchy_code)
+ORDER BY (tenant_id, campaign_number, boundary_hierarchy_code)
 AS
 SELECT 
+    tenant_id,
     campaign_number,
     settlement_code AS boundary_hierarchy_code,
     countIf(latitude >= -90 AND latitude <= 90 AND longitude >= -180 AND longitude <= 180) * 100.0 / nullIf(count(), 0) AS gps_coverage_percentage,
@@ -189,5 +203,6 @@ SELECT
     sum(is_duplicate) * 100.0 / nullIf(count(), 0) AS duplicate_percentage
 FROM mv_project_task_kpi_base
 GROUP BY 
+    tenant_id,
     campaign_number, 
     settlement_code;
