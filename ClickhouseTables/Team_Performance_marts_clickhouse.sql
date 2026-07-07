@@ -12,11 +12,12 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- #############################################################################
 
 CREATE MATERIALIZED VIEW dm_team_performance_base
-REFRESH EVERY 24 HOUR
+REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, team_id, task_date)
+ORDER BY (tenant_id, campaign_number, team_id, task_date)
 AS
 SELECT
+    pt.tenant_id,
     pt.project_id,
     pt.campaign_number,
     ifNull(nullIf(pt.region_code, ''), 'Unknown') AS region_code,
@@ -38,9 +39,9 @@ SELECT
     countIf(pt.synced_time IS NOT NULL AND pt.created_time IS NOT NULL AND pt.synced_time >= pt.created_time) AS valid_sync_count
 FROM project_task_enriched pt
 LEFT JOIN project_beneficiary_enriched pb 
-    ON pt.project_beneficiary_client_reference_id = pb.client_reference_id
+    ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 GROUP BY
-    pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.health_facility_code, pt.settlement_code, pt.user_name, pt.task_dates;
+    pt.tenant_id, pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.health_facility_code, pt.settlement_code, pt.user_name, pt.task_dates;
 
 
 -- #############################################################################
@@ -51,83 +52,86 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_team_performance_league
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, team_id)
+ORDER BY (tenant_id, campaign_number, team_id)
 AS
 WITH target_data AS (
-    SELECT campaign_number, user_name AS team_id, count(DISTINCT beneficiary_id) AS target
+    SELECT tenant_id, campaign_number, user_name AS team_id, count(DISTINCT beneficiary_id) AS target
     FROM project_beneficiary_enriched
     WHERE is_deleted = false
-    GROUP BY campaign_number, user_name
+    GROUP BY tenant_id, campaign_number, user_name
 ),
 vaccinated_data AS (
-    SELECT campaign_number, team_id, sum(vaccinated_count) AS vaccinated
+    SELECT tenant_id, campaign_number, team_id, sum(vaccinated_count) AS vaccinated
     FROM dm_team_performance_base
-    GROUP BY campaign_number, team_id
+    GROUP BY tenant_id, campaign_number, team_id
 )
 SELECT
+    ifNull(v.tenant_id, t.tenant_id) AS tenant_id,
     ifNull(v.campaign_number, t.campaign_number) AS campaign_number,
     ifNull(v.team_id, t.team_id) AS team_id,
     ifNull(v.vaccinated, 0) AS vaccinated,
     ifNull(t.target, 0) AS target,
     round((ifNull(v.vaccinated, 0) * 100.0) / nullIf(ifNull(t.target, 0), 0), 2) AS performance_percentage,
     RANK() OVER (
-        PARTITION BY ifNull(v.campaign_number, t.campaign_number)
+        PARTITION BY ifNull(v.tenant_id, t.tenant_id), ifNull(v.campaign_number, t.campaign_number)
         ORDER BY ifNull(v.vaccinated, 0) DESC
     ) AS performance_rank
 FROM target_data t
 FULL OUTER JOIN vaccinated_data v 
-  ON t.campaign_number = v.campaign_number AND t.team_id = v.team_id;
+  ON t.tenant_id = v.tenant_id AND t.campaign_number = v.campaign_number AND t.team_id = v.team_id;
 
 -- KPI 2: Daily Submission Velocity
 CREATE MATERIALIZED VIEW dm_team_daily_velocity
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, team_id, task_date)
+ORDER BY (tenant_id, campaign_number, team_id, task_date)
 AS
 SELECT
+    tp.tenant_id,
     tp.campaign_number,
     tp.team_id,
     tp.task_date,
     sum(tp.total_submissions) AS submissions_per_day
 FROM dm_team_performance_base tp
-JOIN project_enriched p ON tp.project_id = p.id AND p.settlement_code IS NOT NULL
+JOIN project_enriched p ON tp.project_id = p.id AND tp.tenant_id = p.tenant_id
 WHERE toUnixTimestamp(toDateTime(tp.task_date)) * 1000 BETWEEN p.start_date AND p.end_date
-GROUP BY tp.campaign_number, tp.team_id, tp.task_date;
+GROUP BY tp.tenant_id, tp.campaign_number, tp.team_id, tp.task_date;
 
 
 -- KPI 4 & 5: Consolidated Sync Metrics (Rate & Timing)
 CREATE MATERIALIZED VIEW dm_team_sync_metrics_base
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, task_date)
+ORDER BY (tenant_id, campaign_number, task_date)
 AS
 WITH team_daily_sync AS (
     SELECT 
-        campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id,
         max(is_synced_today) AS is_synced_today
     FROM dm_team_performance_base
-    GROUP BY campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id
 ),
 sync_rate AS (
     SELECT
-        campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
         count() AS total_active_teams,
         sum(is_synced_today) AS synced_teams_count,
         round((sum(is_synced_today) * 100.0) / nullIf(count(), 0), 2) AS sync_rate_percentage
     FROM team_daily_sync
-    GROUP BY campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
 ),
 sync_timing AS (
     SELECT
-        campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
         sum(under_1hr_count) AS under_1hr_count,
         sum(one_to_6hr_count) AS one_to_6hr_count,
         sum(six_to_24hr_count) AS six_to_24hr_count,
         sum(over_24hr_count) AS over_24hr_count
     FROM dm_team_performance_base
-    GROUP BY campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
 )
 SELECT
+    ifNull(r.tenant_id, t.tenant_id) AS tenant_id,
     ifNull(r.campaign_number, t.campaign_number) AS campaign_number,
     ifNull(r.region_code, t.region_code) AS region_code,
     ifNull(r.district_code, t.district_code) AS district_code,
@@ -143,7 +147,7 @@ SELECT
     ifNull(t.over_24hr_count, 0) AS over_24hr_count
 FROM sync_rate r
 FULL OUTER JOIN sync_timing t 
-  ON r.campaign_number = t.campaign_number 
+  ON r.tenant_id = t.tenant_id AND r.campaign_number = t.campaign_number 
  AND r.region_code = t.region_code
  AND r.district_code = t.district_code
  AND r.health_facility_code = t.health_facility_code
@@ -155,16 +159,41 @@ FULL OUTER JOIN sync_timing t
 CREATE MATERIALIZED VIEW dm_team_sync_lag_campaign
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, team_id)
+ORDER BY (tenant_id, campaign_number, team_id)
 AS
 SELECT
+    tenant_id,
     campaign_number,
     team_id,
     sum(total_sync_lag_ms) / nullIf(sum(valid_sync_count), 0) AS avg_sync_lag,
     RANK() OVER (
-        PARTITION BY campaign_number
+        PARTITION BY tenant_id, campaign_number
         ORDER BY sum(total_sync_lag_ms) / nullIf(sum(valid_sync_count), 0) ASC
     ) AS sync_lag_rank
 FROM dm_team_performance_base
 GROUP BY
-    campaign_number, team_id;
+    tenant_id, campaign_number, team_id;
+
+
+-- KPI 3: Submission Rate per Hour (Outliers)
+CREATE MATERIALIZED VIEW dm_team_submission_flags_village
+REFRESH EVERY 1 HOUR
+ENGINE = MergeTree()
+ORDER BY (tenant_id, campaign_number, team_id, task_date, hour)
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    user_name AS team_id,
+    task_dates AS task_date,
+    toHour(toDateTime(created_time / 1000)) AS hour,
+    count(id) AS hourly_submission_count,
+    if(count(id) > 100, 1, 0) AS is_outlier
+FROM project_task_enriched
+GROUP BY
+    tenant_id,
+    campaign_number,
+    user_name,
+    task_dates,
+    hour;
+
