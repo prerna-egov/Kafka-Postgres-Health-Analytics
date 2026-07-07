@@ -13,9 +13,10 @@ SET allow_experimental_refreshable_materialized_view = 1;
 CREATE MATERIALIZED VIEW dm_successful_deliveries_base
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, product_name, region_code, district_code, health_facility_code, settlement_code, event_date)
+ORDER BY (tenant_id, campaign_number, product_name, region_code, district_code, health_facility_code, settlement_code, event_date)
 AS 
 SELECT
+    tenant_id,
     campaign_number,
     region_code,
     district_code,
@@ -27,6 +28,7 @@ SELECT
 FROM project_task_enriched
 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -40,9 +42,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_targets_base
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, target_type, product_name, region_code, district_code, health_facility_code, settlement_code)
+ORDER BY (tenant_id, campaign_number, target_type, product_name, region_code, district_code, health_facility_code, settlement_code)
 AS
 SELECT
+    tenant_id,
     campaign_number,
     target_type,
     region_code,
@@ -59,6 +62,7 @@ WHERE settlement_code IS NOT NULL
   AND start_date IS NOT NULL 
   AND end_date IS NOT NULL
 GROUP BY 
+    tenant_id,
     campaign_number, 
     target_type, 
     region_code, 
@@ -75,40 +79,42 @@ GROUP BY
 -- KPI 2: OVERALL COVERAGE RATE
 CREATE OR REPLACE VIEW dm_campaign_coverage AS
 WITH campaign_deliveries AS (
-    SELECT campaign_number, product_name, sum(total_vaccinated) AS total_vaccinated
+    SELECT tenant_id, campaign_number, product_name, sum(total_vaccinated) AS total_vaccinated
     FROM dm_successful_deliveries_base
-    GROUP BY campaign_number, product_name
+    GROUP BY tenant_id, campaign_number, product_name
 ),
 campaign_targets_cte AS (
-    SELECT campaign_number, product_name, sum(target_population) AS target_population
+    SELECT tenant_id, campaign_number, product_name, sum(target_population) AS target_population
     FROM dm_targets_base
     WHERE target_type = 'INDIVIDUAL'
-    GROUP BY campaign_number, product_name
+    GROUP BY tenant_id, campaign_number, product_name
 )
 SELECT
+    t.tenant_id AS tenant_id,
     t.campaign_number AS campaign_number,
     t.product_name AS product_name,
     ifNull(d.total_vaccinated, 0) AS total_vaccinated,
     t.target_population,
     round(ifNull(d.total_vaccinated, 0) / nullIf(t.target_population, 0) * 100, 2) AS coverage_percentage
 FROM campaign_targets_cte t
-LEFT JOIN campaign_deliveries d ON t.campaign_number = d.campaign_number AND t.product_name = d.product_name;
+LEFT JOIN campaign_deliveries d ON t.tenant_id = d.tenant_id AND t.campaign_number = d.campaign_number AND t.product_name = d.product_name;
 
 
 -- KPI 3: HEALTH FACILITY COVERAGE RATE
 CREATE OR REPLACE VIEW dm_health_facility_status AS
 WITH target_hfs AS (
-    SELECT DISTINCT campaign_number, product_name, region_code, district_code, health_facility_code
+    SELECT DISTINCT tenant_id, campaign_number, product_name, region_code, district_code, health_facility_code
     FROM dm_targets_base
     WHERE target_type = 'INDIVIDUAL'
       AND health_facility_code IS NOT NULL
 ),
 delivered_hfs AS (
-    SELECT DISTINCT campaign_number, product_name, region_code, district_code, health_facility_code
+    SELECT DISTINCT tenant_id, campaign_number, product_name, region_code, district_code, health_facility_code
     FROM dm_successful_deliveries_base
     WHERE health_facility_code IS NOT NULL
 )
 SELECT 
+    t.tenant_id AS tenant_id,
     t.campaign_number AS campaign_number,
     t.product_name AS product_name,
     t.region_code AS region_code,
@@ -118,7 +124,8 @@ SELECT
     d.health_facility_code IS NOT NULL AS is_delivered
 FROM target_hfs t
 LEFT JOIN delivered_hfs d 
-    ON t.campaign_number = d.campaign_number 
+    ON t.tenant_id = d.tenant_id
+   AND t.campaign_number = d.campaign_number 
    AND t.product_name = d.product_name
    AND t.region_code = d.region_code
    AND t.district_code = d.district_code
@@ -129,15 +136,17 @@ LEFT JOIN delivered_hfs d
 CREATE OR REPLACE VIEW dm_campaign_forecast AS
 WITH campaign_dimensions AS (
     SELECT
+        tenant_id,
         campaign_number,
         min(start_date) AS start_date,
         max(end_date)   AS end_date,
         max(total_days) AS total_days
     FROM dm_targets_base
-    GROUP BY campaign_number
+    GROUP BY tenant_id, campaign_number
 ),
 campaign_stats AS (
     SELECT
+        cov.tenant_id,
         cov.campaign_number,
         cov.product_name,
         cov.total_vaccinated,
@@ -148,9 +157,10 @@ campaign_stats AS (
         cd.total_days           AS total_campaign_days,
         least(greatest(toInt32(dateDiff('day', cd.start_date, today()) + 1), 1), cd.total_days) AS days_elapsed
     FROM dm_campaign_coverage cov
-    JOIN campaign_dimensions cd ON cd.campaign_number = cov.campaign_number
+    JOIN campaign_dimensions cd ON cd.tenant_id = cov.tenant_id AND cd.campaign_number = cov.campaign_number
 )
 SELECT
+    tenant_id,
     campaign_number,
     product_name,
     total_vaccinated,
@@ -168,12 +178,13 @@ FROM campaign_stats;
 -- KPI 7: DISTRICT PERFORMANCE SUMMARY
 CREATE OR REPLACE VIEW dm_district_performance AS
 WITH district_deliveries AS (
-    SELECT region_code, district_code, campaign_number, product_name, sum(total_vaccinated) AS delivery_count
+    SELECT tenant_id, region_code, district_code, campaign_number, product_name, sum(total_vaccinated) AS delivery_count
     FROM dm_successful_deliveries_base
-    GROUP BY region_code, district_code, campaign_number, product_name
+    GROUP BY tenant_id, region_code, district_code, campaign_number, product_name
 ),
 district_targets_cte AS (
     SELECT
+        tenant_id,
         campaign_number,
         region_code,
         district_code,
@@ -184,10 +195,11 @@ district_targets_cte AS (
         max(total_days) AS total_days
     FROM dm_targets_base
     WHERE target_type = 'INDIVIDUAL'
-    GROUP BY campaign_number, region_code, district_code, product_name
+    GROUP BY tenant_id, campaign_number, region_code, district_code, product_name
 ),
 district_metrics AS (
     SELECT
+        dt.tenant_id AS tenant_id,
         dt.region_code AS region_code,
         dt.district_code AS district_code,
         dt.campaign_number AS campaign_number,
@@ -201,7 +213,8 @@ district_metrics AS (
         least(greatest(toInt32(dateDiff('day', dt.start_date, today()) + 1), 1), dt.total_days) AS days_elapsed
     FROM district_targets_cte dt
     LEFT JOIN district_deliveries dd
-        ON dd.region_code   = dt.region_code
+        ON dd.tenant_id = dt.tenant_id
+       AND dd.region_code   = dt.region_code
        AND dd.district_code = dt.district_code
        AND dd.campaign_number   = dt.campaign_number
        AND dd.product_name  = dt.product_name
@@ -213,6 +226,7 @@ district_metrics_computed AS (
     FROM district_metrics
 )
 SELECT
+    tenant_id,
     campaign_number,
     region_code,
     district_code,
@@ -227,7 +241,7 @@ SELECT
     campaign_end_date,
     today() AS snapshot_date,
     rank() OVER (
-        PARTITION BY campaign_number, product_name
+        PARTITION BY tenant_id, campaign_number, product_name
         ORDER BY actual_coverage DESC NULLS LAST
     ) AS coverage_rank
 FROM district_metrics_computed;
