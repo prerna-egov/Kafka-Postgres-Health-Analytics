@@ -10,13 +10,14 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- ==========================================================================
 
 -- 1. dm_beneficiary_status
-CREATE MATERIALIZED VIEW dm_beneficiary_status
-REFRESH EVERY 24 HOUR
+CREATE MATERIALIZED VIEW dm_beneficiary_status_base
+REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code)
 AS
 WITH beneficiary_visits AS (
     SELECT
+        pb.tenant_id,
         pb.campaign_number,
         pb.region_code,
         pb.district_code,
@@ -29,10 +30,11 @@ WITH beneficiary_visits AS (
         sum(if(t.administration_status = 'VISITED', 1, 0)) AS visited_count,
         sum(if(t.administration_status = 'ADMINISTRATION_SUCCESS', 1, 0)) AS success_count
     FROM project_beneficiary_enriched pb
-    LEFT JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id
-    GROUP BY pb.campaign_number, pb.region_code, pb.district_code, pb.health_facility_code, pb.settlement_code, pb.beneficiary_id
+    LEFT JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
+    GROUP BY pb.tenant_id, pb.campaign_number, pb.region_code, pb.district_code, pb.health_facility_code, pb.settlement_code, pb.beneficiary_id
 )
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -44,6 +46,7 @@ SELECT
     toUInt64(count(beneficiary_id)) AS total_beneficiaries
 FROM beneficiary_visits
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -52,12 +55,13 @@ GROUP BY
 
 
 -- 2. dm_task_status
-CREATE MATERIALIZED VIEW dm_task_status
+CREATE MATERIALIZED VIEW dm_task_status_base
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code)
 AS
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -74,6 +78,7 @@ SELECT
     toUInt64(count()) AS total_records
 FROM project_task_enriched    
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -89,9 +94,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_refusal_breakdown
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code, refusal_reason)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, refusal_reason)
 AS
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -102,6 +108,7 @@ SELECT
 FROM project_task_enriched
 WHERE administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'REFUSED'
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -114,9 +121,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_absence_breakdown
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code, absence_category)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, absence_category)
 AS
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -127,6 +135,7 @@ SELECT
 FROM project_task_enriched
 WHERE (administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'ABSENCE') OR administration_status = 'CLOSED_HOUSEHOLD'
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -139,9 +148,10 @@ GROUP BY
 CREATE MATERIALIZED VIEW dm_settlement_refusal_rate
 REFRESH EVERY 1 HOUR
 ENGINE = MergeTree()
-ORDER BY (campaign_number, region_code, district_code, health_facility_code, settlement_code, settlement_type)
+ORDER BY (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, settlement_type)
 AS
 SELECT
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
@@ -152,6 +162,7 @@ SELECT
     toUInt64(count()) AS total_records
 FROM project_task_enriched
 GROUP BY 
+    tenant_id,
     campaign_number, 
     region_code, 
     district_code, 
