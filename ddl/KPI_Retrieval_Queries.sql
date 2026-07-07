@@ -316,7 +316,7 @@ WHERE tenant_id = :tenant_id AND campaign_number = :campaign_number AND team_id 
 ORDER BY task_date ASC;
 
 -- KPI 3: Submission Rate per Hour (Outliers)
-SELECT team_id FROM dm_team_submission_flags_village WHERE tenant_id = :tenant_id AND campaign_number = :campaign_number;
+-- SELECT team_id FROM dm_team_submission_flags_village WHERE tenant_id = :tenant_id AND campaign_number = :campaign_number;
 
 -- KPI 4 & 5: Consolidated Sync Metrics (Rate & Timing) Drill-downs
 
