@@ -103,20 +103,20 @@ CREATE UNIQUE INDEX idx_dm_team_daily_velocity ON dm_team_daily_velocity (tenant
 
 
 
--- KPI 3: Submission Rate per Hour (Flagging Outliers)
-CREATE MATERIALIZED VIEW dm_team_submission_flags_village AS
-SELECT DISTINCT campaign_number, team_id
-FROM (
-    SELECT 
-        settlement_code, campaign_number, task_date, team_id,
-        (SUM(total_submissions) / (GREATEST(MAX(max_created_time) - MIN(min_created_time), 1000) / 60000.0)) AS rate_per_minute
-    FROM dm_team_performance_base
-    GROUP BY settlement_code, campaign_number, task_date, team_id
-    HAVING SUM(total_submissions) > 1
-) AS flagged_events
-WHERE rate_per_minute > 10.0 ; -- required threshold 
+-- -- KPI 3: Submission Rate per Hour (Flagging Outliers)
+-- CREATE MATERIALIZED VIEW dm_team_submission_flags_village AS
+-- SELECT DISTINCT campaign_number, team_id
+-- FROM (
+--     SELECT 
+--         settlement_code, campaign_number, task_date, team_id,
+--         (SUM(total_submissions) / (GREATEST(MAX(max_created_time) - MIN(min_created_time), 1000) / 60000.0)) AS rate_per_minute
+--     FROM dm_team_performance_base
+--     GROUP BY settlement_code, campaign_number, task_date, team_id
+--     HAVING SUM(total_submissions) > 1
+-- ) AS flagged_events
+-- WHERE rate_per_minute > 10.0 ; -- required threshold 
 
-CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_number, team_id);
+-- CREATE UNIQUE INDEX idx_dm_team_sub_flags_vil ON dm_team_submission_flags_village (campaign_number, team_id);
 
 -- KPI 4 & 5: Consolidated Sync Metrics (Rate & Timing)
 CREATE MATERIALIZED VIEW dm_team_sync_metrics_base AS
