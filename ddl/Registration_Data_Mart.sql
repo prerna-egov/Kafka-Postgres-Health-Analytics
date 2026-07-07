@@ -33,7 +33,7 @@ SELECT
     pb.additional_details->>'guestMember' AS guest_member,
     pb.region_code,
     pb.district_code,
-    pb.healthfacility_code,
+    pb.health_facility_code,
     pb.settlement_code,
     MAX(CASE WHEN pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS is_vaccinated,
     MAX(CASE WHEN pt.id IS NOT NULL AND pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS has_delivery_record,
@@ -45,14 +45,14 @@ GROUP BY
     pb.tenant_id, pb.beneficiary_id, pb.campaign_number,
     pb.beneficiary_additional_fields->>'ageMonths', pb.beneficiary_additional_fields->>'settlementType',
     pb.additional_details->>'gender', pb.additional_details->>'guestMember',
-    pb.region_code, pb.district_code, pb.healthfacility_code, pb.settlement_code;
+    pb.region_code, pb.district_code, pb.health_facility_code, pb.settlement_code;
 
 CREATE UNIQUE INDEX idx_dm_reg_ben_base ON dm_registration_beneficiary_base (tenant_id, beneficiary_id, COALESCE(campaign_number, 'NONE'));
 
 -- TIER 2A: Aggregate Metrics Base Mart
 CREATE MATERIALIZED VIEW dm_registration_metrics_base AS
 SELECT
-    tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code,
+    tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     CASE
         WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
         WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
@@ -69,7 +69,7 @@ SELECT
     SUM(has_delivery_record) FILTER (WHERE age_months <= 59) AS delivered_u5_count
 FROM dm_registration_beneficiary_base
 GROUP BY
-    tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code,
+    tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     CASE
         WHEN age_months BETWEEN 0  AND 11 THEN '0-11m'
         WHEN age_months BETWEEN 12 AND 23 THEN '12-23m'
@@ -79,18 +79,18 @@ GROUP BY
     COALESCE(gender, 'Unknown'),
     COALESCE(settlement_type, 'Unknown');
 
-CREATE UNIQUE INDEX idx_dm_reg_metrics_base ON dm_registration_metrics_base (tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, age_band, gender, settlement_type);
+CREATE UNIQUE INDEX idx_dm_reg_metrics_base ON dm_registration_metrics_base (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, age_band, gender, settlement_type);
 
 -- TIER 2B: Household Metrics Base Mart  (household_id doubt)
 CREATE MATERIALIZED VIEW dm_household_metrics_base AS
 SELECT
-    tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code,
+    tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     COUNT(DISTINCT id) AS total_households_registered
 FROM household_enriched
 WHERE is_deleted IS NOT TRUE
-GROUP BY tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code;
+GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code;
 
-CREATE UNIQUE INDEX idx_dm_hh_metrics_base ON dm_household_metrics_base (tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code);
+CREATE UNIQUE INDEX idx_dm_hh_metrics_base ON dm_household_metrics_base (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code);
 
 
 -- ---------------------------------------------------------------
@@ -99,14 +99,13 @@ CREATE UNIQUE INDEX idx_dm_hh_metrics_base ON dm_household_metrics_base (tenant_
 -- Indexes for dm_registration_metrics_base
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_region ON dm_registration_metrics_base (tenant_id, campaign_number, region_code);
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_district ON dm_registration_metrics_base (tenant_id, campaign_number, district_code);
-CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_hc ON dm_registration_metrics_base (tenant_id, campaign_number, healthfacility_code);
+CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_hc ON dm_registration_metrics_base (tenant_id, campaign_number, health_facility_code);
 CREATE INDEX IF NOT EXISTS idx_reg_metrics_campaign_village ON dm_registration_metrics_base (tenant_id, campaign_number, settlement_code);
 
 -- Indexes for dm_household_metrics_base
 CREATE INDEX IF NOT EXISTS idx_hh_metrics_campaign_region ON dm_household_metrics_base (tenant_id, campaign_number, region_code);
 CREATE INDEX IF NOT EXISTS idx_hh_metrics_campaign_district ON dm_household_metrics_base (tenant_id, campaign_number, district_code);
-CREATE INDEX IF NOT EXISTS idx_hh_metrics_campaign_hc ON dm_household_metrics_base (tenant_id, campaign_number, healthfacility_code);
+CREATE INDEX IF NOT EXISTS idx_hh_metrics_campaign_hc ON dm_household_metrics_base (tenant_id, campaign_number, health_facility_code);
 CREATE INDEX IF NOT EXISTS idx_hh_metrics_campaign_village ON dm_household_metrics_base (tenant_id, campaign_number, settlement_code);
-
 
 
