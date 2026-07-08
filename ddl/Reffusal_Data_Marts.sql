@@ -46,12 +46,11 @@ CREATE MATERIALIZED VIEW dm_task_status_base AS -- aggregation for different fie
 SELECT
     t.tenant_id, t.campaign_number, t.region_code, t.district_code, t.health_facility_code, t.settlement_code,
     COUNT(*) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED')) AS failed_visit_count, -- being used in the KPI 1 (Failed Visit Count )
-    COUNT(*) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED', 'VISITED')) - COUNT(DISTINCT pb.beneficiary_id) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED')) AS total_revisit_records, -- being used in the KPI 8 (Revisit Success Rate)
+    COUNT(*) FILTER (WHERE t.administration_status IN ('CLOSED_HOUSEHOLD', 'ADMINISTRATION_FAILED', 'VISITED')), -- being used in the KPI 8 (Revisit Success Rate)
     COUNT(*) FILTER (WHERE t.administration_status = 'VISITED') AS revisit_successful_count, -- being used in the KPI 8 (Revisit Success Rate)
     COUNT(*) FILTER (WHERE t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'REFUSED') AS refusal_count, -- being used in the refusal rate by district (KPI 6)
     COUNT(*) AS total_records
 FROM project_task_enriched t
-         LEFT JOIN project_beneficiary_enriched pb ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
 GROUP BY t.tenant_id, t.campaign_number, t.region_code, t.district_code, t.health_facility_code, t.settlement_code;
 
 CREATE UNIQUE INDEX idx_dm_task_status_base ON dm_task_status_base (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code);
