@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS household_member_enriched (
     synced_time_stamp                       TIMESTAMPTZ,
     geo_point_lat                           DOUBLE PRECISION,
     geo_point_lon                           DOUBLE PRECISION,
-    locality_code                           VARCHAR(128),
+    boundary_code                           VARCHAR(128),
     additional_details                      JSONB
 
     -- ==========================================
@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
 
 
     task_dates                              DATE,
-    locality_code                           VARCHAR(128),
+    boundary_code                           VARCHAR(128),
     additional_details                      JSONB
 
     -- ==========================================
@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     name_of_user                    VARCHAR(250),
     user_address                    VARCHAR(440),
     role                            VARCHAR(128),
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
     is_deleted                      BOOLEAN         DEFAULT FALSE,
 
     -- ==========================================
@@ -626,7 +626,7 @@ CREATE TABLE IF NOT EXISTS bill_enriched (
     -- ==========================================
     id                              VARCHAR(64)     PRIMARY KEY,
     tenant_id                       VARCHAR(64)     NOT NULL,
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
     bill_date                       BIGINT          NOT NULL,
     due_date                        BIGINT,
     total_amount                    NUMERIC(12, 2)  DEFAULT 0,
@@ -774,7 +774,7 @@ CREATE TABLE IF NOT EXISTS side_effect_enriched (
     health_facility_code              VARCHAR(128),
     settlement_code                    VARCHAR(128),
 
-    locality_code                               VARCHAR(256),
+    boundary_code                               VARCHAR(256),
     individual_id                               VARCHAR(64),
     gender                                      VARCHAR(64),
     symptoms                                    TEXT,           -- Downstream comma-separated String
@@ -1143,7 +1143,7 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
     health_facility_code              VARCHAR(128),
     settlement_code                    VARCHAR(128),
 
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
 
     -- Dynamic extensions
     additional_details              JSONB,
@@ -1266,7 +1266,7 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     product_variant                 VARCHAR(256),
     product_name                    VARCHAR(256),
     target_type                     VARCHAR(128),
-    locality_code                   VARCHAR(128),
+    boundary_code                   VARCHAR(128),
 
 
 
@@ -1482,7 +1482,7 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     latitude                                DOUBLE PRECISION,
     longitude                               DOUBLE PRECISION,
     location_accuracy                       DOUBLE PRECISION,
-    locality_code                           VARCHAR(256),
+    boundary_code                           VARCHAR(256),
     geo_point                               JSONB,          -- List<Double> Array [lon, lat]
 
  -- Flattened Boundary Hierarchy Fields
