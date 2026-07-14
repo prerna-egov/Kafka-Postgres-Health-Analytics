@@ -21,7 +21,7 @@ SELECT
     pt.campaign_number,
     pt.region_code,
     pt.district_code,
-    pt.healthfacility_code,
+    pt.health_facility_code,
     pt.settlement_code,
     pt.user_name AS team_id,
     pt.task_dates AS task_date,
@@ -36,13 +36,13 @@ SELECT
     COUNT(CASE WHEN (pt.synced_time - pt.created_time) >= 86400000 THEN 1 END) AS over_24hr_count,
     SUM(pt.synced_time - pt.created_time) FILTER (WHERE pt.synced_time >= pt.created_time) AS total_sync_lag_ms,
     COUNT(*) FILTER (WHERE pt.synced_time IS NOT NULL AND pt.created_time IS NOT NULL AND pt.synced_time >= pt.created_time) AS valid_sync_count
-FROM project_task_enriched pt
-LEFT JOIN project_beneficiary_enriched pb
+FROM project_task_entity pt
+LEFT JOIN project_beneficiary_entity pb
     ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 GROUP BY
-    pt.tenant_id, pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.healthfacility_code, pt.settlement_code, pt.user_name, pt.task_dates;
+    pt.tenant_id, pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.health_facility_code, pt.settlement_code, pt.user_name, pt.task_dates;
 
-CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (tenant_id, project_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, team_id, task_date);
+CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (tenant_id, project_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, team_id, task_date);
 
 
 -- #############################################################################
@@ -55,7 +55,7 @@ CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (tenant_id
 CREATE MATERIALIZED VIEW dm_team_performance_league AS
 WITH target_data AS (
     SELECT tenant_id, campaign_number, user_name AS team_id, COUNT(DISTINCT beneficiary_id) AS target
-    FROM project_beneficiary_enriched
+    FROM project_beneficiary_entity
     WHERE is_deleted IS NOT TRUE
     GROUP BY tenant_id, campaign_number, user_name
 ),
@@ -94,7 +94,7 @@ SELECT
     tp.task_date,
     SUM(tp.total_submissions) AS submissions_per_day
 FROM dm_team_performance_base tp
-JOIN project_enriched p ON tp.project_id = p.id AND tp.tenant_id = p.tenant_id
+JOIN project_entity p ON tp.project_id = p.id AND tp.tenant_id = p.tenant_id
 WHERE (EXTRACT(EPOCH FROM tp.task_date) * 1000)::BIGINT BETWEEN p.start_date AND p.end_date
 GROUP BY tp.tenant_id, tp.campaign_number, tp.team_id, tp.task_date;
 
@@ -122,36 +122,36 @@ CREATE UNIQUE INDEX idx_dm_team_daily_velocity ON dm_team_daily_velocity (tenant
 CREATE MATERIALIZED VIEW dm_team_sync_metrics_base AS
 WITH team_daily_sync AS (
     SELECT
-        tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id,
         MAX(is_synced_today) AS is_synced_today
     FROM dm_team_performance_base
-    GROUP BY tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date, team_id
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date, team_id
 ),
 sync_rate AS (
     SELECT
-        tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
         COUNT(*) AS total_active_teams,
         SUM(is_synced_today) AS synced_teams_count,
         ROUND((SUM(is_synced_today) * 100.0) / NULLIF(COUNT(*), 0), 2) AS sync_rate_percentage
     FROM team_daily_sync
-    GROUP BY tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
 ),
 sync_timing AS (
     SELECT
-        tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date,
+        tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date,
         SUM(under_1hr_count) AS under_1hr_count,
         SUM(one_to_6hr_count) AS one_to_6hr_count,
         SUM(six_to_24hr_count) AS six_to_24hr_count,
         SUM(over_24hr_count) AS over_24hr_count
     FROM dm_team_performance_base
-    GROUP BY tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date
+    GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date
 )
 SELECT
     COALESCE(r.tenant_id, t.tenant_id) AS tenant_id,
     COALESCE(r.campaign_number, t.campaign_number) AS campaign_number,
     COALESCE(r.region_code, t.region_code) AS region_code,
     COALESCE(r.district_code, t.district_code) AS district_code,
-    COALESCE(r.healthfacility_code, t.healthfacility_code) AS healthfacility_code,
+    COALESCE(r.health_facility_code, t.health_facility_code) AS health_facility_code,
     COALESCE(r.settlement_code, t.settlement_code) AS settlement_code,
     COALESCE(r.task_date, t.task_date) AS task_date,
     COALESCE(r.total_active_teams, 0) AS total_active_teams,
@@ -167,14 +167,14 @@ FULL OUTER JOIN sync_timing t
  AND r.campaign_number = t.campaign_number
  AND r.region_code = t.region_code
  AND r.district_code = t.district_code
- AND r.healthfacility_code = t.healthfacility_code
+ AND r.health_facility_code = t.health_facility_code
  AND r.settlement_code = t.settlement_code
  AND r.task_date = t.task_date;
 
-CREATE UNIQUE INDEX idx_dm_team_sync_metrics_base ON dm_team_sync_metrics_base (tenant_id, campaign_number, region_code, district_code, healthfacility_code, settlement_code, task_date);
+CREATE UNIQUE INDEX idx_dm_team_sync_metrics_base ON dm_team_sync_metrics_base (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, task_date);
 CREATE INDEX idx_dm_team_sync_region ON dm_team_sync_metrics_base (tenant_id, campaign_number, region_code, task_date);
 CREATE INDEX idx_dm_team_sync_district ON dm_team_sync_metrics_base (tenant_id, campaign_number, district_code, task_date);
-CREATE INDEX idx_dm_team_sync_hf ON dm_team_sync_metrics_base (tenant_id, campaign_number, healthfacility_code, task_date);
+CREATE INDEX idx_dm_team_sync_hf ON dm_team_sync_metrics_base (tenant_id, campaign_number, health_facility_code, task_date);
 
 
 
@@ -195,4 +195,3 @@ GROUP BY
 
 CREATE UNIQUE INDEX idx_dm_team_sync_lag_camp ON dm_team_sync_lag_campaign (tenant_id, campaign_number, team_id);
 CREATE INDEX idx_dm_team_sync_lag_rank ON dm_team_sync_lag_campaign (tenant_id, campaign_number, sync_lag_rank);
-

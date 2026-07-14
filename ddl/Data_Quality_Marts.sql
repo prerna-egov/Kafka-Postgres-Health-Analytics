@@ -13,13 +13,13 @@ WITH campaign_dates AS (
     FROM dm_targets_base
     GROUP BY tenant_id, campaign_number
 ),
-task_enriched AS (
+task_entity AS (
     SELECT
         t.id AS task_id,
         t.tenant_id,
         t.campaign_number,
         t.country_code,
-        t.healthfacility_code,
+        t.health_facility_code,
         t.region_code,
         t.district_code,
         t.settlement_code,
@@ -37,8 +37,8 @@ task_enriched AS (
         cd.start_date AS project_start_date,
         cd.end_date AS project_end_date,
         cd.campaign_duration_in_days
-    FROM project_task_enriched t
-    LEFT JOIN project_beneficiary_enriched b
+    FROM project_task_entity t
+    LEFT JOIN project_beneficiary_entity b
         ON t.project_beneficiary_client_reference_id = b.client_reference_id
        AND t.tenant_id = b.tenant_id
     LEFT JOIN campaign_dates cd
@@ -54,14 +54,14 @@ spatial_clustering AS (
         -- Note: PostGIS ST_ClusterDBSCAN is disabled because the 'postgis' extension is not available.
         -- We temporarily output NULL for cluster_id until the extension is installed.
         NULL AS cluster_id
-    FROM task_enriched
+    FROM task_entity
 )
 SELECT
     task_id,
     tenant_id,
     campaign_number,
     country_code,
-    healthfacility_code,
+    health_facility_code,
     region_code,
     district_code,
     settlement_code,
@@ -134,13 +134,13 @@ GROUP BY
 CREATE INDEX idx_datamart_country_code_tenant ON datamart_country_code (tenant_id, campaign_number);
 
 -- 3.2 Health Center Code Data Mart
-DROP TABLE IF EXISTS datamart_healthfacility_code;
-DROP MATERIALIZED VIEW IF EXISTS datamart_healthfacility_code;
-CREATE MATERIALIZED VIEW datamart_healthfacility_code AS
+DROP TABLE IF EXISTS datamart_health_facility_code;
+DROP MATERIALIZED VIEW IF EXISTS datamart_health_facility_code;
+CREATE MATERIALIZED VIEW datamart_health_facility_code AS
 SELECT
     tenant_id,
     campaign_number,
-    healthfacility_code AS boundary_hierarchy_code,
+    health_facility_code AS boundary_hierarchy_code,
     COUNT(CASE WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS gps_coverage_percentage,
     PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY task_location_accuracy) AS gps_accuracy_p10,
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY task_location_accuracy) AS gps_accuracy_p50,
@@ -153,9 +153,9 @@ FROM mv_project_task_kpi_base
 GROUP BY
     tenant_id,
     campaign_number,
-    healthfacility_code;
+    health_facility_code;
 
-CREATE INDEX idx_datamart_healthfacility_code_tenant ON datamart_healthfacility_code (tenant_id, campaign_number);
+CREATE INDEX idx_datamart_health_facility_code_tenant ON datamart_health_facility_code (tenant_id, campaign_number);
 
 -- 3.3 Region Code Data Mart
 DROP TABLE IF EXISTS datamart_region_code;

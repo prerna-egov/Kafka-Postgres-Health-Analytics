@@ -2,8 +2,8 @@
 -- COVERAGE OVERVIEW KPI DATA MARTS
 -- ==========================================================================
 -- Generated: 2026-06-29
--- Source Tables: project_task_enriched, project_enriched, project_beneficiary_enriched
--- Join Key: project_task_enriched.project_id = project_enriched.id
+-- Source Tables: project_task_entity, project_entity, project_beneficiary_entity
+-- Join Key: project_task_entity.project_id = project_entity.id
 -- Delivery Filter: administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
 -- ==========================================================================
 
@@ -22,7 +22,7 @@ SELECT
     product_name,
     task_dates AS event_date,
     COUNT(*) AS total_vaccinated
-FROM project_task_enriched
+FROM project_task_entity
 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
 GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code, product_name, task_dates;
 
@@ -48,7 +48,7 @@ SELECT
     TO_TIMESTAMP(MIN(start_date) / 1000)::DATE AS start_date,
     TO_TIMESTAMP(MAX(end_date)   / 1000)::DATE AS end_date,
     MAX(campaign_duration_in_days) AS total_days
-FROM project_enriched
+FROM project_entity
 WHERE settlement_code IS NOT NULL
   AND start_date IS NOT NULL
   AND end_date IS NOT NULL
@@ -119,7 +119,7 @@ SELECT
     CASE WHEN t.health_facility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_targeted,
     CASE WHEN d.health_facility_code IS NOT NULL THEN TRUE ELSE FALSE END AS is_delivered
 FROM target_hfs t
-FULL OUTER JOIN delivered_hfs d
+LEFT JOIN delivered_hfs d
     ON t.tenant_id = d.tenant_id
    AND t.campaign_number = d.campaign_number
    AND t.product_name = d.product_name

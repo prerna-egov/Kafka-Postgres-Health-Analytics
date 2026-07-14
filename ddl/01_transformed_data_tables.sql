@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS household_enriched (
+CREATE TABLE IF NOT EXISTS household_entity (
     -- ==========================================
     -- CORE FIELDS (From Household.java)
     -- ==========================================
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS household_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS household_member_enriched (
+CREATE TABLE IF NOT EXISTS household_member_entity (
     -- HouseholdMember core fields
     id                                      VARCHAR(64)     PRIMARY KEY,
     tenant_id                               VARCHAR(1000)   NOT NULL,
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS household_member_enriched (
     synced_time_stamp                       TIMESTAMPTZ,
     geo_point_lat                           DOUBLE PRECISION,
     geo_point_lon                           DOUBLE PRECISION,
-    locality_code                           VARCHAR(128),
+    boundary_code                           VARCHAR(128),
     additional_details                      JSONB
 
     -- ==========================================
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS household_member_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS project_beneficiary_enriched (
+CREATE TABLE IF NOT EXISTS project_beneficiary_entity (
     -- ProjectBeneficiary core fields
     id                                      VARCHAR(64)     PRIMARY KEY,
     tenant_id                               VARCHAR(64)     NOT NULL,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_enriched (
 
     );
 
-CREATE TABLE IF NOT EXISTS attendance_log_enriched (
+CREATE TABLE IF NOT EXISTS attendance_log_entity (
     -- ==========================================
     -- CORE FIELDS (From AttendanceLog.java)
     -- ==========================================
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS attendance_log_enriched (
     campaign_id                             VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS attendance_register_enriched (
+CREATE TABLE IF NOT EXISTS attendance_register_entity (
     -- AttendanceRegister core fields
     id                                      VARCHAR(256)    PRIMARY KEY,
     tenant_id                               VARCHAR(64),
@@ -281,7 +281,7 @@ CREATE TABLE IF NOT EXISTS attendance_register_enriched (
 
     );
 
-CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
+CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
     -- Service core fields
     id                                      VARCHAR(64)     PRIMARY KEY,
     tenant_id                               VARCHAR(64)     NOT NULL,
@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
 
 
     task_dates                              DATE,
-    locality_code                           VARCHAR(128),
+    boundary_code                           VARCHAR(128),
     additional_details                      JSONB
 
     -- ==========================================
@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS project_staff_enriched (
+CREATE TABLE IF NOT EXISTS project_staff_entity (
     -- ==========================================
     -- CORE FIELDS (From ProjectStaffIndexV1.java)
     -- ==========================================
@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
     name_of_user                    VARCHAR(250),
     user_address                    VARCHAR(440),
     role                            VARCHAR(128),
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
     is_deleted                      BOOLEAN         DEFAULT FALSE,
 
     -- ==========================================
@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS project_staff_enriched (
 
 
 
-CREATE TABLE IF NOT EXISTS referral_enriched (
+CREATE TABLE IF NOT EXISTS referral_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From Referral.java)
     -- (Nested under "referral" in JSON, requires SMT Flattening)
@@ -465,7 +465,7 @@ CREATE TABLE IF NOT EXISTS referral_enriched (
     campaign_id                                 VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS device_token_enriched (
+CREATE TABLE IF NOT EXISTS device_token_entity (
     -- ==========================================
     -- Fields from DeviceToken.java
     -- ==========================================
@@ -513,7 +513,7 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS device_token_enriched (
+CREATE TABLE IF NOT EXISTS device_token_entity (
     -- ==========================================
     -- Fields from DeviceToken.java
     -- ==========================================
@@ -561,7 +561,7 @@ CREATE TABLE IF NOT EXISTS device_token_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS hf_referral_enriched (
+CREATE TABLE IF NOT EXISTS hf_referral_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From HFReferral.java)
     -- ==========================================
@@ -620,13 +620,13 @@ CREATE TABLE IF NOT EXISTS hf_referral_enriched (
     campaign_id                         VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS bill_enriched (
+CREATE TABLE IF NOT EXISTS bill_entity (
     -- ==========================================
     -- Fields from Bill.java
     -- ==========================================
     id                              VARCHAR(64)     PRIMARY KEY,
     tenant_id                       VARCHAR(64)     NOT NULL,
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
     bill_date                       BIGINT          NOT NULL,
     due_date                        BIGINT,
     total_amount                    NUMERIC(12, 2)  DEFAULT 0,
@@ -686,7 +686,7 @@ CREATE TABLE IF NOT EXISTS bill_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS attendee_enriched (
+CREATE TABLE IF NOT EXISTS attendee_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From IndividualEntry.java)
     -- ==========================================
@@ -734,7 +734,7 @@ CREATE TABLE IF NOT EXISTS attendee_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS side_effect_enriched (
+CREATE TABLE IF NOT EXISTS side_effect_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From SideEffect.java)
     -- ==========================================
@@ -774,7 +774,7 @@ CREATE TABLE IF NOT EXISTS side_effect_enriched (
     health_facility_code              VARCHAR(128),
     settlement_code                    VARCHAR(128),
 
-    locality_code                               VARCHAR(256),
+    boundary_code                               VARCHAR(256),
     individual_id                               VARCHAR(64),
     gender                                      VARCHAR(64),
     symptoms                                    TEXT,           -- Downstream comma-separated String
@@ -797,7 +797,7 @@ CREATE TABLE IF NOT EXISTS side_effect_enriched (
     campaign_id                                 VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS muster_roll_enriched (
+CREATE TABLE IF NOT EXISTS muster_roll_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From MusterRoll.java)
     -- ==========================================
@@ -851,7 +851,7 @@ CREATE TABLE IF NOT EXISTS muster_roll_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS stock_enriched (
+CREATE TABLE IF NOT EXISTS stock_entity (
     -- ==========================================
     -- DOWNSTREAM FIELDS (From StockIndexV1.java)
     -- ==========================================
@@ -910,7 +910,7 @@ CREATE TABLE IF NOT EXISTS stock_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS attendance_staff_enriched (
+CREATE TABLE IF NOT EXISTS attendance_staff_entity (
     -- ==========================================
     -- Fields from StaffPermission.java
     -- ==========================================
@@ -959,7 +959,7 @@ CREATE TABLE IF NOT EXISTS attendance_staff_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS service_task_enriched (
+CREATE TABLE IF NOT EXISTS service_task_entity (
     id VARCHAR(255) PRIMARY KEY,
 
     created_time BIGINT,
@@ -1013,7 +1013,7 @@ CREATE TABLE IF NOT EXISTS service_task_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS bill_detail_enriched (
+CREATE TABLE IF NOT EXISTS bill_detail_entity (
     -- ==========================================
     -- Fields from BillDetail.java
     -- ==========================================
@@ -1081,7 +1081,7 @@ CREATE TABLE IF NOT EXISTS bill_detail_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
+CREATE TABLE IF NOT EXISTS stock_reconciliation_entity (
     -- ==========================================
     -- CORE FIELDS: From StockReconciliation.java
     -- ==========================================
@@ -1143,7 +1143,7 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
     health_facility_code              VARCHAR(128),
     settlement_code                    VARCHAR(128),
 
-    locality_code                   VARCHAR(256),
+    boundary_code                   VARCHAR(256),
 
     -- Dynamic extensions
     additional_details              JSONB,
@@ -1159,7 +1159,7 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_enriched (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS referral_service_task_enriched (
+CREATE TABLE IF NOT EXISTS referral_service_task_entity (
 
     -- ==========================================
     -- PRIMARY KEY
@@ -1238,7 +1238,7 @@ CREATE TABLE IF NOT EXISTS referral_service_task_enriched (
     );
 
 --
-CREATE TABLE IF NOT EXISTS project_enriched (
+CREATE TABLE IF NOT EXISTS project_entity (
     -- ==========================================
     -- PRIMARY KEY
     -- ==========================================
@@ -1266,7 +1266,7 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     product_variant                 VARCHAR(256),
     product_name                    VARCHAR(256),
     target_type                     VARCHAR(128),
-    locality_code                   VARCHAR(128),
+    boundary_code                   VARCHAR(128),
 
 
 
@@ -1296,7 +1296,7 @@ CREATE TABLE IF NOT EXISTS project_enriched (
     );
 
 
-CREATE TABLE IF NOT EXISTS bill_report_enriched (
+CREATE TABLE IF NOT EXISTS bill_report_entity (
     -- ==========================================
     -- CORE UPSTREAM FIELDS: From BillReport.java
     -- ==========================================
@@ -1347,7 +1347,7 @@ CREATE TABLE IF NOT EXISTS bill_report_enriched (
 
 
 
-CREATE TABLE IF NOT EXISTS user_action_enriched (
+CREATE TABLE IF NOT EXISTS user_action_entity (
     -- ==========================================
     -- UPSTREAM FIELDS (From UserAction.java & EgovOfflineModel)
     -- (Nested under "userAction" in JSON, requires SMT Flattening)
@@ -1422,7 +1422,7 @@ CREATE TABLE IF NOT EXISTS user_action_enriched (
 
 
 
-CREATE TABLE IF NOT EXISTS project_task_enriched (
+CREATE TABLE IF NOT EXISTS project_task_entity (
     -- ==========================================
     -- PRIMARY KEY
     -- ==========================================
@@ -1482,7 +1482,7 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
     latitude                                DOUBLE PRECISION,
     longitude                               DOUBLE PRECISION,
     location_accuracy                       DOUBLE PRECISION,
-    locality_code                           VARCHAR(256),
+    boundary_code                           VARCHAR(256),
     geo_point                               JSONB,          -- List<Double> Array [lon, lat]
 
  -- Flattened Boundary Hierarchy Fields
@@ -1522,47 +1522,47 @@ CREATE TABLE IF NOT EXISTS project_task_enriched (
 -- ==========================================================================
 
 -- Optimizing the "Failed/Refused" Task Extraction
-CREATE INDEX idx_pt_enriched_failed_tasks 
-ON project_task_enriched (campaign_number, region_code, district_code, health_facility_code, settlement_code)
+CREATE INDEX idx_pt_entity_failed_tasks 
+ON project_task_entity (campaign_number, region_code, district_code, health_facility_code, settlement_code)
 WHERE administration_status IN ('ADMINISTRATION_FAILED', 'CLOSED_HOUSEHOLD');
 
 -- The Beneficiary-Task Relationship Join
-CREATE INDEX idx_pt_enriched_beneficiary_ref 
-ON project_task_enriched (project_beneficiary_client_reference_id);
+CREATE INDEX idx_pt_entity_beneficiary_ref 
+ON project_task_entity (project_beneficiary_client_reference_id);
 
 -- The Beneficiary Primary Key Join
-CREATE UNIQUE INDEX idx_pb_enriched_client_ref 
-ON project_beneficiary_enriched (client_reference_id);
+CREATE UNIQUE INDEX idx_pb_entity_client_ref 
+ON project_beneficiary_entity (client_reference_id);
 
 -- Household Boundary Grouping
-CREATE INDEX idx_hh_enriched_boundary 
-ON household_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+CREATE INDEX idx_hh_entity_boundary 
+ON household_entity (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- Household Member boundary  Grouping
-CREATE INDEX idx_hhm_enriched_boundary 
-ON household_member_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+CREATE INDEX idx_hhm_entity_boundary 
+ON household_member_entity (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- Project Task boundary  Grouping
-CREATE INDEX idx_pt_enriched_boundary 
-ON project_task_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+CREATE INDEX idx_pt_entity_boundary 
+ON project_task_entity (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- project beneficiary boundary  grouping 
-CREATE INDEX idx_pb_enriched_boundary 
-ON project_beneficiary_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+CREATE INDEX idx_pb_entity_boundary 
+ON project_beneficiary_entity (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- Referral Service Task boundary  Grouping
 CREATE INDEX idx_ref_svc_task_boundary 
-ON referral_service_task_enriched (campaign_id, country_code, region_code, district_code, health_facility_code, settlement_code);
+ON referral_service_task_entity (campaign_id, country_code, region_code, district_code, health_facility_code, settlement_code);
 
 -- Project Enriched Targeted Filtering
-CREATE INDEX idx_project_enriched_id_partial
-ON project_enriched (id)
+CREATE INDEX idx_project_entity_id_partial
+ON project_entity (id)
 WHERE settlement_code IS NOT NULL;
 
 -- Temporal & Time-Series Extraction
-CREATE INDEX idx_pt_enriched_task_dates 
-ON project_task_enriched (campaign_number, task_dates);
+CREATE INDEX idx_pt_entity_task_dates 
+ON project_task_entity (campaign_number, task_dates);
 
 -- User Action Task boundary Grouping
 CREATE INDEX idx_user_action_boundary 
-ON user_action_enriched (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
+ON user_action_entity (campaign_number, country_code, region_code, district_code, health_facility_code, settlement_code);
