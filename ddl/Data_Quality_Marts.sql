@@ -13,7 +13,7 @@ WITH campaign_dates AS (
     FROM dm_targets_base
     GROUP BY tenant_id, campaign_number
 ),
-task_enriched AS (
+task_entity AS (
     SELECT
         t.id AS task_id,
         t.tenant_id,
@@ -37,8 +37,8 @@ task_enriched AS (
         cd.start_date AS project_start_date,
         cd.end_date AS project_end_date,
         cd.campaign_duration_in_days
-    FROM project_task_enriched t
-    LEFT JOIN project_beneficiary_enriched b
+    FROM project_task_entity t
+    LEFT JOIN project_beneficiary_entity b
         ON t.project_beneficiary_client_reference_id = b.client_reference_id
        AND t.tenant_id = b.tenant_id
     LEFT JOIN campaign_dates cd
@@ -54,7 +54,7 @@ spatial_clustering AS (
         -- Note: PostGIS ST_ClusterDBSCAN is disabled because the 'postgis' extension is not available.
         -- We temporarily output NULL for cluster_id until the extension is installed.
         NULL AS cluster_id
-    FROM task_enriched
+    FROM task_entity
 )
 SELECT
     task_id,

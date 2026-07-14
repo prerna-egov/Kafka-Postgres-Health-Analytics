@@ -42,8 +42,8 @@ SELECT
     sum(if(toFloat64OrNull(JSONExtractString(pb.beneficiary_additional_fields, 'ageMonths')) <= 59 AND 
            pt.administration_status IN ('ADMINISTRATION_SUCCESS', 'ADMINISTRATION_FAILED', 'VISITED'), 1, 0)) AS delivered_u5_count
 
-FROM project_beneficiary_enriched pb
-LEFT JOIN project_task_enriched pt 
+FROM project_beneficiary_entity pb
+LEFT JOIN project_task_entity pt 
     ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 WHERE pb.is_deleted = 0
 GROUP BY 
@@ -74,7 +74,7 @@ SELECT
     health_facility_code, 
     settlement_code,
     count(DISTINCT id) AS total_households_registered
-FROM household_enriched
+FROM household_entity
 WHERE is_deleted = 0
 GROUP BY 
     tenant_id,

@@ -25,7 +25,7 @@ SELECT
     product_name,
     task_dates AS event_date,
     toUInt64(count()) AS total_vaccinated
-FROM project_task_enriched
+FROM project_task_entity
 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
 GROUP BY 
     tenant_id,
@@ -57,7 +57,7 @@ SELECT
     min(toDate(toDateTime(start_date / 1000))) AS start_date,
     max(toDate(toDateTime(end_date / 1000))) AS end_date,
     max(toInt32(campaign_duration_in_days)) AS total_days
-FROM project_enriched
+FROM project_entity
 WHERE settlement_code IS NOT NULL 
   AND start_date IS NOT NULL 
   AND end_date IS NOT NULL

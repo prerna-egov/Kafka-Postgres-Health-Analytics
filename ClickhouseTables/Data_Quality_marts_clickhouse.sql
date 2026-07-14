@@ -24,7 +24,7 @@ WITH campaign_dates AS (
     FROM dm_targets_base
     GROUP BY tenant_id, campaign_number
 ),
-task_enriched AS (
+task_entity AS (
     SELECT 
         t.id AS task_id,
         t.tenant_id,
@@ -45,8 +45,8 @@ task_enriched AS (
         cd.start_date AS project_start_date,
         cd.end_date AS project_end_date,
         cd.campaign_duration_in_days
-    FROM project_task_enriched t
-    LEFT JOIN project_beneficiary_enriched b
+    FROM project_task_entity t
+    LEFT JOIN project_beneficiary_entity b
         ON t.project_beneficiary_client_reference_id = b.client_reference_id
        AND t.tenant_id = b.tenant_id
     LEFT JOIN campaign_dates cd
@@ -76,7 +76,7 @@ SELECT
         beneficiary_id IS NOT NULL AND count() OVER (PARTITION BY tenant_id, campaign_number, beneficiary_id) > 1, 1,
         0
     ) AS is_duplicate
-FROM task_enriched;
+FROM task_entity;
 
 -- ==============================================================================
 -- 3. BOUNDARY LEVEL DATA MARTS

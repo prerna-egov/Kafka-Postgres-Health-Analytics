@@ -36,8 +36,8 @@ SELECT
     COUNT(CASE WHEN (pt.synced_time - pt.created_time) >= 86400000 THEN 1 END) AS over_24hr_count,
     SUM(pt.synced_time - pt.created_time) FILTER (WHERE pt.synced_time >= pt.created_time) AS total_sync_lag_ms,
     COUNT(*) FILTER (WHERE pt.synced_time IS NOT NULL AND pt.created_time IS NOT NULL AND pt.synced_time >= pt.created_time) AS valid_sync_count
-FROM project_task_enriched pt
-LEFT JOIN project_beneficiary_enriched pb
+FROM project_task_entity pt
+LEFT JOIN project_beneficiary_entity pb
     ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 GROUP BY
     pt.tenant_id, pt.project_id, pt.campaign_number, pt.region_code, pt.district_code, pt.health_facility_code, pt.settlement_code, pt.user_name, pt.task_dates;
@@ -55,7 +55,7 @@ CREATE UNIQUE INDEX idx_dm_team_perf_base ON dm_team_performance_base (tenant_id
 CREATE MATERIALIZED VIEW dm_team_performance_league AS
 WITH target_data AS (
     SELECT tenant_id, campaign_number, user_name AS team_id, COUNT(DISTINCT beneficiary_id) AS target
-    FROM project_beneficiary_enriched
+    FROM project_beneficiary_entity
     WHERE is_deleted IS NOT TRUE
     GROUP BY tenant_id, campaign_number, user_name
 ),
@@ -94,7 +94,7 @@ SELECT
     tp.task_date,
     SUM(tp.total_submissions) AS submissions_per_day
 FROM dm_team_performance_base tp
-JOIN project_enriched p ON tp.project_id = p.id AND tp.tenant_id = p.tenant_id
+JOIN project_entity p ON tp.project_id = p.id AND tp.tenant_id = p.tenant_id
 WHERE (EXTRACT(EPOCH FROM tp.task_date) * 1000)::BIGINT BETWEEN p.start_date AND p.end_date
 GROUP BY tp.tenant_id, tp.campaign_number, tp.team_id, tp.task_date;
 

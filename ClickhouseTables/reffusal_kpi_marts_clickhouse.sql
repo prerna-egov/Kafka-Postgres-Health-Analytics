@@ -29,8 +29,8 @@ WITH beneficiary_visits AS (
         sum(if(t.id IS NOT NULL, 1, 0)) AS total_visits,
         sum(if(t.administration_status = 'VISITED', 1, 0)) AS visited_count,
         sum(if(t.administration_status = 'ADMINISTRATION_SUCCESS', 1, 0)) AS success_count
-    FROM project_beneficiary_enriched pb
-    LEFT JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
+    FROM project_beneficiary_entity pb
+    LEFT JOIN project_task_entity t ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
     GROUP BY pb.tenant_id, pb.campaign_number, pb.region_code, pb.district_code, pb.health_facility_code, pb.settlement_code, pb.beneficiary_id
 )
 SELECT
@@ -76,7 +76,7 @@ SELECT
     sum(if(administration_status = 'VISITED', 1, 0)) AS revisit_successful_count,
     sum(if(administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'REFUSED', 1, 0)) AS refusal_count,
     toUInt64(count()) AS total_records
-FROM project_task_enriched    
+FROM project_task_entity    
 GROUP BY 
     tenant_id,
     campaign_number, 
@@ -105,7 +105,7 @@ SELECT
     settlement_code, 
     ifNull(nullIf(JSONExtractString(additional_details, 'refusalReason'), ''), 'Unknown') AS refusal_reason,
     toUInt64(count()) AS refusal_count
-FROM project_task_enriched
+FROM project_task_entity
 WHERE administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'REFUSED'
 GROUP BY 
     tenant_id,
@@ -132,7 +132,7 @@ SELECT
     settlement_code, 
     if(administration_status = 'CLOSED_HOUSEHOLD', 'CLOSED_HOUSEHOLD', ifNull(nullIf(JSONExtractString(additional_details, 'absenceReason'), ''), 'UNSPECIFIED')) AS absence_category,
     toUInt64(count()) AS absence_count
-FROM project_task_enriched
+FROM project_task_entity
 WHERE (administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'ABSENCE') OR administration_status = 'CLOSED_HOUSEHOLD'
 GROUP BY 
     tenant_id,
@@ -160,7 +160,7 @@ SELECT
     ifNull(nullIf(JSONExtractString(additional_details, 'settlementType'), ''), 'Unknown') AS settlement_type,
     sum(if(administration_status = 'ADMINISTRATION_FAILED' AND JSONExtractString(additional_details, 'reason') = 'REFUSED', 1, 0)) AS refusal_count,
     toUInt64(count()) AS total_records
-FROM project_task_enriched
+FROM project_task_entity
 GROUP BY 
     tenant_id,
     campaign_number, 

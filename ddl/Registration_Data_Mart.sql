@@ -38,8 +38,8 @@ SELECT
     MAX(CASE WHEN pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS is_vaccinated,
     MAX(CASE WHEN pt.id IS NOT NULL AND pt.administration_status IN ('VISITED', 'ADMINISTRATION_SUCCESS') THEN 1 ELSE 0 END) AS has_delivery_record,
     MAX(CASE WHEN LOWER(pt.additional_details->>'receivedOPVBefore') = 'no' THEN 1 ELSE 0 END) AS is_zero_dose
-FROM project_beneficiary_enriched pb
-LEFT JOIN project_task_enriched pt ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
+FROM project_beneficiary_entity pb
+LEFT JOIN project_task_entity pt ON pt.project_beneficiary_client_reference_id = pb.client_reference_id AND pt.tenant_id = pb.tenant_id
 WHERE pb.is_deleted IS NOT TRUE
 GROUP BY
     pb.tenant_id, pb.beneficiary_id, pb.campaign_number,
@@ -86,7 +86,7 @@ CREATE MATERIALIZED VIEW dm_household_metrics_base AS
 SELECT
     tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     COUNT(DISTINCT id) AS total_households_registered
-FROM household_enriched
+FROM household_entity
 WHERE is_deleted IS NOT TRUE
 GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code;
 

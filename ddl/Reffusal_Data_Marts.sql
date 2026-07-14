@@ -17,8 +17,8 @@ WITH ben_level AS (
              AND COUNT(*) FILTER (WHERE t.administration_status = 'ADMINISTRATION_SUCCESS') = 0
             THEN 1 ELSE 0
         END AS is_multi_unsuccessful -- being used in the KPI 9 (Multi-Unsuccessful)
-    FROM project_beneficiary_enriched pb
-             JOIN project_task_enriched t ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
+    FROM project_beneficiary_entity pb
+             JOIN project_task_entity t ON t.project_beneficiary_client_reference_id = pb.client_reference_id AND t.tenant_id = pb.tenant_id
     GROUP BY pb.tenant_id, pb.campaign_number, pb.region_code, pb.district_code, pb.health_facility_code, pb.settlement_code, pb.beneficiary_id
 )
 SELECT
@@ -50,7 +50,7 @@ SELECT
     COUNT(*) FILTER (WHERE t.administration_status = 'VISITED') AS revisit_successful_count, -- being used in the KPI 8 (Revisit Success Rate)
     COUNT(*) FILTER (WHERE t.administration_status = 'ADMINISTRATION_FAILED' AND t.additional_details ->> 'reason' = 'REFUSED') AS refusal_count, -- being used in the refusal rate by district (KPI 6)
     COUNT(*) AS total_records
-FROM project_task_enriched t
+FROM project_task_entity t
 GROUP BY t.tenant_id, t.campaign_number, t.region_code, t.district_code, t.health_facility_code, t.settlement_code;
 
 CREATE UNIQUE INDEX idx_dm_task_status_base ON dm_task_status_base (tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code);
@@ -61,7 +61,7 @@ SELECT
     tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     COALESCE(additional_details ->> 'refusalReason', 'Unknown') AS refusal_reason,
     COUNT(*) AS refusal_count
-FROM project_task_enriched
+FROM project_task_entity
 WHERE administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'REFUSED'
 GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
          COALESCE(additional_details ->> 'refusalReason', 'Unknown');
@@ -73,7 +73,7 @@ SELECT
     tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
     CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END AS absence_category,
     COUNT(*) AS absence_count
-FROM project_task_enriched
+FROM project_task_entity
 WHERE (administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'ABSENCE') OR administration_status = 'CLOSED_HOUSEHOLD'
 GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
          CASE WHEN administration_status = 'CLOSED_HOUSEHOLD' THEN 'CLOSED_HOUSEHOLD' ELSE COALESCE(additional_details ->> 'absenceReason', 'UNSPECIFIED') END;
@@ -86,7 +86,7 @@ SELECT
     COALESCE(additional_details ->> 'settlementType', 'Unknown') AS settlement_type,
     COUNT(*) FILTER (WHERE administration_status = 'ADMINISTRATION_FAILED' AND additional_details ->> 'reason' = 'REFUSED') AS refusal_count,
     COUNT(*) AS total_records
-FROM project_task_enriched
+FROM project_task_entity
 GROUP BY tenant_id, campaign_number, region_code, district_code, health_facility_code, settlement_code,
          COALESCE(additional_details ->> 'settlementType', 'Unknown');
 
