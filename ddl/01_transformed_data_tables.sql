@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS household_member_entity (
     geo_point_lat                           DOUBLE PRECISION,
     geo_point_lon                           DOUBLE PRECISION,
     boundary_code                           VARCHAR(128),
-    additional_details                      JSONB
+    additional_details                      JSONB,
 
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
@@ -860,7 +860,7 @@ CREATE TABLE IF NOT EXISTS stock_entity (
     task_dates                        DATE,
     synced_date                       DATE,
     additional_details                JSONB,
-    waybill_number                    VARCHAR(128)
+    waybill_number                    VARCHAR(128),
 
     -- ==========================================
     -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
@@ -962,7 +962,7 @@ CREATE TABLE IF NOT EXISTS service_task_entity (
     additional_details JSONB,
 
     latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION
+    longitude DOUBLE PRECISION,
 
     -- ==========================================
     -- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
