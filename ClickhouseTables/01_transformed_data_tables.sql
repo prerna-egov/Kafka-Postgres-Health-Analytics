@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS household_entity (
     synced_time_stamp               DateTime64(3, 'UTC'), -- Millisecond precision with timezone
 
     -- Flattened Boundary Hierarchy Fields
+    --TODO: Should the boundary hierarchy (country_code, region_code, etc.) be flattened into every table, or referenced via a boundary_id to a geography dimension table?
     country_code                    LowCardinality(String),
     region_code                     LowCardinality(String),
     district_code                   LowCardinality(String),
@@ -261,6 +262,7 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     name                                    String,
     reference_id                            String,
     service_code                            String,
+    --TODO: Should we standardize time representations? Mixing Int64 epoch times (start_date) and native DateTime64 (transformer_time_stamp) creates inconsistent querying patterns.
     start_date                              Int64,
     end_date                                Int64,
     status                                  LowCardinality(String),
