@@ -281,6 +281,20 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
 
     );
 
+CREATE TABLE attendance_staff_entity(
+    id                           character varying(256) NOT NULL,
+    individual_id                character varying(64) NOT NULL,
+    register_id                  character varying(64) NOT NULL,
+    enrollment_date              bigint NOT NULL,
+    deenrollment_date            bigint NOT NULL,
+    additional_details            JSONB,
+    created_by                    character varying(256)  NOT NULL,
+    lastmodified_by               character varying(256),
+    created_time                  bigint,
+    last_modified_time             bigint,
+    CONSTRAINT pk_attendance_staff_entity PRIMARY KEY (id)
+);
+
 CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
     -- Service core fields
     id                                      VARCHAR(64)     PRIMARY KEY,
@@ -1292,8 +1306,10 @@ CREATE TABLE IF NOT EXISTS project_entity (
     project_type_id                 VARCHAR(64),
     project_name                    VARCHAR(256),
     campaign_number                 VARCHAR(128),
-    campaign_id                     VARCHAR(128)
-    );
+    campaign_id                     VARCHAR(128),
+
+    CONSTRAINT pk_project_entity PRIMARY KEY (id, target_type)
+);
 
 
 CREATE TABLE IF NOT EXISTS bill_report_entity (
