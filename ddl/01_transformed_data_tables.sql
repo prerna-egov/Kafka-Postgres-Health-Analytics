@@ -253,7 +253,6 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     start_date                              BIGINT,
     end_date                                BIGINT,
     status                                  VARCHAR(64),
-    staff                                   JSONB, --TODO: should this be kept in a separate table?
     attendees                               JSONB, --TODO: should this be kept in a separate table?
 
 -- AttendanceRegister.additionalDetails
@@ -268,6 +267,16 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     -- AttendanceRegisterIndexV1 top-level fields
     attendees_info                          JSONB,
     transformer_time_stamp                  TIMESTAMPTZ,
+
+    staffs_count BIGINT,
+    attendees_count BIGINT,
+
+     -- Flattened Boundary Hierarchy Fields
+    country_code                    VARCHAR(128),
+    region_code                   VARCHAR(128),
+    district_code                   VARCHAR(128),
+    health_facility_code              VARCHAR(128),
+    settlement_code                    VARCHAR(128),
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
     -- ==========================================
@@ -281,19 +290,6 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
 
     );
 
-CREATE TABLE attendance_staff_entity(
-    id                           character varying(256) NOT NULL,
-    individual_id                character varying(64) NOT NULL,
-    register_id                  character varying(64) NOT NULL,
-    enrollment_date              bigint NOT NULL,
-    deenrollment_date            bigint NOT NULL,
-    additional_details            JSONB,
-    created_by                    character varying(256)  NOT NULL,
-    lastmodified_by               character varying(256),
-    created_time                  bigint,
-    last_modified_time             bigint,
-    CONSTRAINT pk_attendance_staff_entity PRIMARY KEY (id)
-);
 
 CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
     -- Service core fields
@@ -352,7 +348,6 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
 
     task_dates                              DATE,
     boundary_code                           VARCHAR(128),
-    additional_details                      JSONB
 
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
@@ -527,52 +522,6 @@ CREATE TABLE IF NOT EXISTS device_token_entity (
     campaign_id                     VARCHAR(128)
     );
 
-CREATE TABLE IF NOT EXISTS device_token_entity (
-    -- ==========================================
-    -- Fields from DeviceToken.java
-    -- ==========================================
-    id                              VARCHAR(64)     PRIMARY KEY,
-    user_id                         VARCHAR(64)     NOT NULL,
-    device_token                    VARCHAR(512)    NOT NULL, -- Expanded length, Firebase/FCM tokens are long
-    device_type                     VARCHAR(64)     NOT NULL,
-    tenant_id                       VARCHAR(1000)   NOT NULL,
-    facility_id                     VARCHAR(64),
-    facility_ids                    JSONB,                    -- Mapped from List<String>
-    user_roles                      VARCHAR(512),             -- Comma-separated roles
-
--- Expanded AuditDetails (from DeviceToken.java)
-    created_by                      VARCHAR(64),
-    last_modified_by                VARCHAR(64),
-    created_time                    BIGINT,
-    last_modified_time              BIGINT,
-
-    -- ==========================================
-    -- Fields from DeviceTokenIndexV1.java
-    -- ==========================================
-    user_name                       VARCHAR(180),
-    role                            VARCHAR(128),             -- Distinct from userRoles above
-
- -- Flattened Boundary Hierarchy Fields
-    country_code                    VARCHAR(128),
-    region_code                   VARCHAR(128),
-    district_code                   VARCHAR(128),
-    health_facility_code              VARCHAR(128),
-    settlement_code                    VARCHAR(128),
-
-
-    task_dates                      DATE,             -- Stored as String per Java model
-    synced_date                     DATE,             -- Stored as String per Java model
-
--- ==========================================
--- EXTRA FIELDS USED BY THE TRANSFORMER DURING TRANSFORMATION
--- ==========================================
-    project_id                      VARCHAR(64),
-    project_type                    VARCHAR(64),
-    project_type_id                 VARCHAR(64),
-    project_name                    VARCHAR(256),
-    campaign_number                 VARCHAR(128),
-    campaign_id                     VARCHAR(128)
-    );
 
 
 CREATE TABLE IF NOT EXISTS hf_referral_entity (
