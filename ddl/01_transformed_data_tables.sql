@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS household_entity (
     synced_time_stamp               TIMESTAMPTZ,
 
     -- Flattened Boundary Hierarchy Fields
+    --TODO: Should the boundary hierarchy (country_code, region_code, etc.) be flattened into every table, or referenced via a boundary_id to a geography dimension table?
     country_code                    VARCHAR(128),
     region_code                   VARCHAR(128),
     district_code                   VARCHAR(128),
@@ -250,6 +251,7 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     name                                    VARCHAR(250),
     reference_id                            VARCHAR(64),
     service_code                            VARCHAR(128),
+    --TODO: Should we standardize time representations? Mixing BIGINT epoch times (enrollment_date, start_date) and native TIMESTAMPTZ (synced_time_stamp) creates inconsistent querying patterns.
     start_date                              BIGINT,
     end_date                                BIGINT,
     status                                  VARCHAR(64),
