@@ -264,7 +264,6 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     start_date                              Int64,
     end_date                                Int64,
     status                                  LowCardinality(String),
-    staff                                   String,
     attendees                               String,
     register_additional_details             String,
     created_by                              String,
@@ -273,6 +272,13 @@ CREATE TABLE IF NOT EXISTS attendance_register_entity (
     last_modified_time                      Int64,
     attendees_info                          String,
     transformer_time_stamp                  DateTime64(3, 'UTC'),
+    staffs_count                            Int64,
+    attendees_count                         Int64,
+    country_code                            LowCardinality(String),
+    region_code                              LowCardinality(String),
+    district_code                            LowCardinality(String),
+    health_facility_code                     LowCardinality(String),
+    settlement_code                          LowCardinality(String),
     project_id                              String,
     project_type                            LowCardinality(String),
     project_type_id                         String,
@@ -631,9 +637,8 @@ CREATE TABLE IF NOT EXISTS side_effect_entity (
     campaign_number                             LowCardinality(String),
     campaign_id                                 LowCardinality(String),
     INDEX idx_side_effect_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1,
-    INDEX idx_side_effect_dates (task_dates) TYPE minmax GRANULARITY 1,
-    INDEX idx_side_effect_status (status) TYPE set(0) GRANULARITY 1
-) 
+    INDEX idx_side_effect_dates (task_dates) TYPE minmax GRANULARITY 1
+)
 ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, campaign_number, id)
 SETTINGS index_granularity = 8192;
@@ -950,9 +955,46 @@ CREATE TABLE IF NOT EXISTS referral_service_task_entity (
     campaign_number                 LowCardinality(String),
     campaign_id                     LowCardinality(String),
     INDEX idx_ref_svc_task_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
-) 
+)
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, campaign_id, id, age_group)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS project_entity (
+    id                              String,
+    tenant_id                       LowCardinality(String),
+    project_number                  String,
+    reference_id                    String,
+    created_by                      String,
+    created_time                    Int64,
+    project_beneficiary_type        LowCardinality(String),
+    sub_project_type                LowCardinality(String),
+    overall_target                  Int32,
+    target_per_day                  Int32,
+    campaign_duration_in_days       Int32,
+    start_date                      Int64,
+    end_date                        Int64,
+    product_variant                 LowCardinality(String),
+    product_name                    LowCardinality(String),
+    target_type                     LowCardinality(String),
+    boundary_code                   LowCardinality(String),
+    country_code                    LowCardinality(String),
+    region_code                     LowCardinality(String),
+    district_code                   LowCardinality(String),
+    health_facility_code            LowCardinality(String),
+    settlement_code                 LowCardinality(String),
+    task_dates                      String,
+    additional_details              String,
+    project_id                      String,
+    project_type                    LowCardinality(String),
+    project_type_id                 String,
+    project_name                    String,
+    campaign_number                 LowCardinality(String),
+    campaign_id                     LowCardinality(String),
+    INDEX idx_project_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(created_time)
+ORDER BY (tenant_id, campaign_number, id, target_type)
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS bill_report_entity (
@@ -1037,7 +1079,7 @@ CREATE TABLE IF NOT EXISTS user_action_entity (
     INDEX idx_user_action_telemetry (synced_time_stamp, action) TYPE minmax GRANULARITY 1
 ) 
 ENGINE = ReplacingMergeTree(client_last_modified_time)
-ORDER BY (tenant_id, campaign_number)
+ORDER BY (tenant_id, campaign_number, id)
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS project_task_entity (
