@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS household_entity (
     campaign_id                     LowCardinality(String),
 
     -- Secondary Data-Skipping Index (Replicates Postgres B-Tree)
-    INDEX idx_hh_entity_geo ( region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_hh_entity_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(client_last_modified_time) 
 ORDER BY (campaign_number, id)
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS household_member_entity (
     campaign_id                             LowCardinality(String),
 
     -- Secondary Data-Skipping Index for Geographic Grouping
-    INDEX idx_hhm_entity_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_hhm_entity_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(client_last_modified_time) 
 ORDER BY (campaign_number, id)
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_entity (
     campaign_id                             LowCardinality(String),
 
     -- Secondary Data-Skipping Index for Geographic Grouping
-    INDEX idx_pb_entity_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_pb_entity_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(client_last_modified_time) 
 ORDER BY (campaign_number, task_dates, id)
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS project_staff_entity (
     project_name                    String,
     campaign_number                 LowCardinality(String),
     campaign_id                     LowCardinality(String),
-    INDEX idx_pst_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_pst_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 ) ENGINE = ReplacingMergeTree(created_time)
 ORDER BY (tenant_id, campaign_number, id)
 SETTINGS index_granularity = 8192;
@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS stock_entity (
     project_name                      String,
     campaign_number                   LowCardinality(String),
     campaign_id                       LowCardinality(String),
-    INDEX idx_stock_geo ( facility_id, level_two_code, level_three_code, level_four_code, level_five_code, level_six_code, level_seven_code) TYPE set(0) GRANULARITY 1,
+    INDEX idx_stock_geo ( facility_id,  level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1,
     INDEX idx_stock_cat (facility_type, product_variant, product_name) TYPE set(0) GRANULARITY 1,
     INDEX idx_stock_date_entry (date_of_entry) TYPE minmax GRANULARITY 1,
     INDEX idx_stock_task_dates (task_dates) TYPE minmax GRANULARITY 1,
@@ -499,7 +499,7 @@ CREATE TABLE IF NOT EXISTS stock_reconciliation_entity (
     project_name                    String,
     campaign_number                 LowCardinality(String),
     campaign_id                     LowCardinality(String),
-    INDEX idx_stock_recon_geo (facility_id, region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_stock_recon_geo (facility_id,  level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 ) 
 ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, campaign_number, id)
@@ -546,7 +546,7 @@ CREATE TABLE IF NOT EXISTS project_entity (
     project_name                    String,
     campaign_number                 LowCardinality(String),
     campaign_id                     LowCardinality(String),
-    INDEX idx_project_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_project_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(created_time)
 ORDER BY (tenant_id, campaign_number, id, target_type)
@@ -613,7 +613,7 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
     campaign_number                         LowCardinality(String),
     campaign_id                             LowCardinality(String),
     
-    INDEX idx_pt_entity_geo (campaign_number, region_code, district_code, health_facility_code, settlement_code, administration_status) TYPE set(0) GRANULARITY 1,
+    INDEX idx_pt_entity_geo (campaign_number,  level_two_code, level_three_code, level_four_code, level_five_code, level_six_code, administration_status) TYPE set(0) GRANULARITY 1,
     INDEX idx_pt_entity_task_dates (campaign_number, task_dates) TYPE minmax GRANULARITY 1,
     INDEX idx_pt_entity_synced_time (synced_time_stamp) TYPE minmax GRANULARITY 1
 ) 
