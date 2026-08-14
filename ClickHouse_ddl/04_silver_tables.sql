@@ -513,6 +513,7 @@ CREATE TABLE IF NOT EXISTS project_entity (
     reference_id                    String,
     created_by                      String,
     created_time                    Int64,
+    last_modified_time              Int64,
     project_beneficiary_type        LowCardinality(String),
     sub_project_type                LowCardinality(String),
     overall_target                  Int32,
@@ -548,7 +549,7 @@ CREATE TABLE IF NOT EXISTS project_entity (
     campaign_id                     LowCardinality(String),
     INDEX idx_project_geo ( level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
-ENGINE = ReplacingMergeTree(created_time)
+ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, campaign_number, id, target_type)
 SETTINGS index_granularity = 8192;
 
