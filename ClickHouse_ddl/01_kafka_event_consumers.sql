@@ -1,3 +1,13 @@
+-- ============================================================================
+-- KAFKA INGESTION TABLES
+-- ============================================================================
+-- Purpose: Ingest raw JSON payloads from Kafka topics
+-- Rule: No JSON parsing here - store as raw String using JSONAsString
+--
+-- These are consumers, not storage: reading from one advances the group offset
+-- and the rows are gone, so only the ingestion MVs in 03 select from them.
+-- ============================================================================
+
 CREATE TABLE IF NOT EXISTS analytics.kafka_household_events
 (
     raw String
@@ -5,9 +15,235 @@ CREATE TABLE IF NOT EXISTS analytics.kafka_household_events
 ENGINE = Kafka
 SETTINGS
     kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
-    kafka_topic_list = 'save-household-events',
+    kafka_topic_list = 'clickhouse-household-events',
     kafka_group_name = 'clickhouse-household-consumer',
     kafka_format = 'JSONAsString',
     kafka_num_consumers = 1,
     kafka_max_block_size = 65536,
     kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_household_member_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-household-member-events',
+    kafka_group_name = 'clickhouse-household-member-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_task_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-task-events',
+    kafka_group_name = 'clickhouse-project-task-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_task_resource_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-task-resource-events',
+    kafka_group_name = 'clickhouse-task-resource-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_address_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-household-service-address-events,clickhouse-project-service-address-events',
+    kafka_group_name = 'clickhouse-address-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-events',
+    kafka_group_name = 'clickhouse-project-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_target_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-target-events',
+    kafka_group_name = 'clickhouse-project-target-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_address_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-address-events',
+    kafka_group_name = 'clickhouse-project-address-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_beneficiary_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-beneficiary-events',
+    kafka_group_name = 'clickhouse-project-beneficiary-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_staff_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-staff-events',
+    kafka_group_name = 'clickhouse-project-staff-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_project_facility_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-project-facility-events',
+    kafka_group_name = 'clickhouse-project-facility-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_individual_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-individual-events',
+    kafka_group_name = 'clickhouse-individual-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_stock_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-stock-events',
+    kafka_group_name = 'clickhouse-stock-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_stock_reconciliation_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-stock-reconciliation-events',
+    kafka_group_name = 'clickhouse-stock-reconciliation-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_facility_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-facility-events',
+    kafka_group_name = 'clickhouse-facility-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_product_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-product-events',
+    kafka_group_name = 'clickhouse-product-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_service_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-service-events',
+    kafka_group_name = 'clickhouse-service-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+
