@@ -435,6 +435,26 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
+CREATE TABLE IF NOT EXISTS analytics.stg_product_variant
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    id                 String,
+    tenant_id          LowCardinality(String),
+    product_id         String,
+    sku                String,
+    variation          String,
+    additional_details String,
+    created_by         String,
+    last_modified_by   String,
+    created_time       Int64,
+    last_modified_time Int64,
+    row_version        Int64,
+    is_deleted         Bool
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
 CREATE TABLE IF NOT EXISTS analytics.stg_service
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),

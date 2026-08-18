@@ -104,6 +104,12 @@ AS
 SELECT raw
 FROM analytics.kafka_product_events;
 
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_product_variant_events_raw
+TO analytics.product_variant_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_product_variant_events;
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_service_events_raw
 TO analytics.service_events_raw
 AS
