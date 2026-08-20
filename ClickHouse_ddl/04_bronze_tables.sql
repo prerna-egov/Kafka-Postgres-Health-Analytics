@@ -497,8 +497,39 @@ CREATE TABLE IF NOT EXISTS analytics.stg_pgr_service
     last_modified_by    String,
     last_modified_time  Int64,
     active              Bool,
-    self_complaint      Bool
+    self_complaint      Bool,
+    hierarchy_type      LowCardinality(String)
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, service_request_id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_pgr_address
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    tenant_id          LowCardinality(String),
+    id                 String,
+    parent_id          String,
+    door_no            String,
+    plot_no            String,
+    building_name      String,
+    street             String,
+    landmark           String,
+    city               String,
+    pincode            String,
+    locality           String,
+    district           LowCardinality(String),
+    region             LowCardinality(String),
+    state              LowCardinality(String),
+    country            LowCardinality(String),
+    latitude           Float64,
+    longitude          Float64,
+    created_by         String,
+    created_time       Int64,
+    last_modified_by   String,
+    last_modified_time Int64,
+    additional_details String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
