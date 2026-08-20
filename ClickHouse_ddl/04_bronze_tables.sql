@@ -497,7 +497,8 @@ CREATE TABLE IF NOT EXISTS analytics.stg_pgr_service
     last_modified_by    String,
     last_modified_time  Int64,
     active              Bool,
-    self_complaint      Bool
+    self_complaint      Bool,
+    hierarchy_type      LowCardinality(String)
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, service_request_id)
