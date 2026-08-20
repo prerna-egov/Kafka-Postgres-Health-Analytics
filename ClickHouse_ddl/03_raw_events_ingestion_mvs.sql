@@ -122,3 +122,9 @@ TO analytics.pgr_service_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_pgr_service_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_pgr_address_events_raw
+TO analytics.pgr_address_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_pgr_address_events;
