@@ -533,3 +533,95 @@ CREATE TABLE IF NOT EXISTS analytics.stg_pgr_address
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_attendance_register
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    id                 String,
+    tenant_id          LowCardinality(String),
+    register_number    String,
+    name               String,
+    start_date         Int64,
+    end_date           Int64,
+    status             LowCardinality(String),
+    additional_details String,
+    created_by         String,
+    last_modified_by   String,
+    created_time       Int64,
+    last_modified_time Int64,
+    reference_id       String,
+    service_code       LowCardinality(String),
+    locality_code      String,
+    review_status      LowCardinality(String),
+    period_statuses    String,
+    campaign_number    LowCardinality(String),
+    is_deleted         Bool
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_attendance_staff
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    id                 String,
+    individual_id      String,
+    register_id        String,
+    tenant_id          LowCardinality(String),
+    enrollment_date    Int64,
+    deenrollment_date  Int64,
+    additional_details String,
+    created_by         String,
+    last_modified_by   String,
+    created_time       Int64,
+    last_modified_time Int64,
+    staff_type         LowCardinality(String)
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_attendance_attendee
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    id                 String,
+    individual_id      String,
+    register_id        String,
+    enrollment_date    Int64,
+    deenrollment_date  Int64,
+    additional_details String,
+    created_by         String,
+    last_modified_by   String,
+    created_time       Int64,
+    last_modified_time Int64,
+    tenant_id          LowCardinality(String),
+    tag                String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_attendance_log
+(
+    _ingested_at              DateTime64(3) DEFAULT now64(3),
+    id                        String,
+    individual_id             String,
+    register_id               String,
+    status                    LowCardinality(String),
+    time                      Int64,
+    event_type                LowCardinality(String),
+    additional_details        String,
+    created_by                String,
+    last_modified_by          String,
+    created_time              Int64,
+    last_modified_time        Int64,
+    tenant_id                 LowCardinality(String),
+    client_reference_id       String,
+    client_created_by         String,
+    client_last_modified_by   String,
+    client_created_time       Int64,
+    client_last_modified_time Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;

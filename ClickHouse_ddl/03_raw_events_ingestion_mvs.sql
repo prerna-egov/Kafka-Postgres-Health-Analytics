@@ -128,3 +128,27 @@ TO analytics.pgr_address_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_pgr_address_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_register_events_raw
+TO analytics.attendance_register_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_register_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_staff_events_raw
+TO analytics.attendance_staff_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_staff_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_attendee_events_raw
+TO analytics.attendance_attendee_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_attendee_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_log_events_raw
+TO analytics.attendance_log_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_log_events;
