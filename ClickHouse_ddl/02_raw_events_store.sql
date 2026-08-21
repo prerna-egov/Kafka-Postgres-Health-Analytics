@@ -288,3 +288,115 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, id)
 SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- ATTENDANCE REGISTER EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.attendance_register_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- ATTENDANCE STAFF EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.attendance_staff_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- ATTENDANCE ATTENDEE EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.attendance_attendee_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- ATTENDANCE LOG EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.attendance_log_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- EXPENSE BILL EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.expense_bill_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- EXPENSE PARTY EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.expense_party_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- EXPENSE BILLDETAIL EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.expense_billdetail_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- EXPENSE LINEITEM EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.expense_lineitem_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;

@@ -128,3 +128,51 @@ TO analytics.pgr_address_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_pgr_address_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_register_events_raw
+TO analytics.attendance_register_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_register_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_staff_events_raw
+TO analytics.attendance_staff_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_staff_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_attendee_events_raw
+TO analytics.attendance_attendee_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_attendee_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_log_events_raw
+TO analytics.attendance_log_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_log_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_expense_bill_events_raw
+TO analytics.expense_bill_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_expense_bill_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_expense_party_events_raw
+TO analytics.expense_party_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_expense_party_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_expense_billdetail_events_raw
+TO analytics.expense_billdetail_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_expense_billdetail_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_expense_lineitem_events_raw
+TO analytics.expense_lineitem_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_expense_lineitem_events;

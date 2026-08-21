@@ -288,3 +288,115 @@ SETTINGS
     kafka_num_consumers = 1,
     kafka_max_block_size = 65536,
     kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_attendance_register_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-attendance-register-events',
+    kafka_group_name = 'clickhouse-attendance-register-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_attendance_staff_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-attendance-staff-events',
+    kafka_group_name = 'clickhouse-attendance-staff-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_attendance_attendee_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-attendance-attendee-events',
+    kafka_group_name = 'clickhouse-attendance-attendee-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_attendance_log_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-attendance-log-events',
+    kafka_group_name = 'clickhouse-attendance-log-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_expense_bill_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-expense-bill-events',
+    kafka_group_name = 'clickhouse-expense-bill-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_expense_party_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-expense-party-events',
+    kafka_group_name = 'clickhouse-expense-party-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_expense_billdetail_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-expense-billdetail-events',
+    kafka_group_name = 'clickhouse-expense-billdetail-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_expense_lineitem_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-expense-lineitem-events',
+    kafka_group_name = 'clickhouse-expense-lineitem-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
