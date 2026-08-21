@@ -625,3 +625,104 @@ CREATE TABLE IF NOT EXISTS analytics.stg_attendance_log
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_expense_bill
+(
+    _ingested_at       DateTime64(3) DEFAULT now64(3),
+    id                 String,
+    tenant_id          LowCardinality(String),
+    bill_date          Int64,
+    due_date           Int64,
+    total_amount       Decimal(12, 2),
+    total_paid_amount  Decimal(12, 2),
+    business_service   LowCardinality(String),
+    reference_id       String,
+    from_period        Int64,
+    to_period          Int64,
+    status             LowCardinality(String),
+    payment_status     LowCardinality(String),
+    bill_number        String,
+    locality_code      String,
+    created_by         String,
+    created_time       Int64,
+    last_modified_by   String,
+    last_modified_time Int64,
+    additional_details String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_expense_party
+(
+    _ingested_at        DateTime64(3) DEFAULT now64(3),
+    id                  String,
+    tenant_id           LowCardinality(String),
+    type                LowCardinality(String),
+    status              LowCardinality(String),
+    identifier          String,
+    parent_id           String,
+    payment_provider    LowCardinality(String),
+    payee_name          String,
+    payee_phone_number  String,
+    bank_account        String,
+    bank_code           LowCardinality(String),
+    beneficiary_code    String,
+    created_by          String,
+    created_time        Int64,
+    last_modified_by    String,
+    last_modified_time  Int64,
+    additional_details  String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_expense_billdetail
+(
+    _ingested_at          DateTime64(3) DEFAULT now64(3),
+    id                    String,
+    tenant_id             LowCardinality(String),
+    reference_id          String,
+    bill_id               String,
+    total_amount          Decimal(12, 2),
+    total_paid_amount     Decimal(12, 2),
+    payment_status        LowCardinality(String),
+    status                LowCardinality(String),
+    from_period           Int64,
+    to_period             Int64,
+    net_line_item_amount  Decimal(12, 2),
+    total_attendance      Decimal(18, 6),
+    worker_id             String,
+    created_by            String,
+    created_time          Int64,
+    last_modified_by      String,
+    last_modified_time    Int64,
+    additional_details    String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_expense_lineitem
+(
+    _ingested_at          DateTime64(3) DEFAULT now64(3),
+    id                    String,
+    bill_detail_id        String,
+    tenant_id             LowCardinality(String),
+    head_code             LowCardinality(String),
+    amount                Decimal(12, 2),
+    paid_amount           Decimal(12, 2),
+    type                  LowCardinality(String),
+    status                LowCardinality(String),
+    payment_status        LowCardinality(String),
+    is_line_item_payable  Bool,
+    created_by            String,
+    created_time          Int64,
+    last_modified_by      String,
+    last_modified_time    Int64,
+    additional_details    String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
