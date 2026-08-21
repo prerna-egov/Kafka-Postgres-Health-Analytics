@@ -2,3 +2,8 @@
 /shelf/
 /workspace.xml
 /.idea
+
+# Local Airflow dev environment
+/airflow_dags/.venv/
+/airflow_dags/.airflow/
+/airflow_dags/dags/__pycache__
