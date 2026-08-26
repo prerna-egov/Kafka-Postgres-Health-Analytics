@@ -400,3 +400,129 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, id)
 SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- REFERRAL EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.referral_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- SIDE EFFECT EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.side_effect_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- HF REFERRAL EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.hf_referral_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- INDIVIDUAL ADDRESS EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.individual_address_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- USER ACTION EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.user_action_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- SERVICE ATTRIBUTE VALUE EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.service_attribute_value_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- SERVICE DEFINITION EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.service_definition_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- MUSTER ROLL EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.muster_roll_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;
+
+-- ############################################################################
+-- ATTENDANCE SUMMARY EVENTS RAW
+-- ############################################################################
+CREATE TABLE IF NOT EXISTS analytics.attendance_summary_events_raw
+(
+    event_time DateTime64(3) DEFAULT now64(3),
+    id         UUID          DEFAULT generateUUIDv4(),
+    raw        String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (event_time, id)
+SETTINGS index_granularity = 8192;

@@ -176,3 +176,57 @@ TO analytics.expense_lineitem_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_expense_lineitem_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_referral_events_raw
+TO analytics.referral_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_referral_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_side_effect_events_raw
+TO analytics.side_effect_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_side_effect_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_hf_referral_events_raw
+TO analytics.hf_referral_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_hf_referral_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_individual_address_events_raw
+TO analytics.individual_address_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_individual_address_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_user_action_events_raw
+TO analytics.user_action_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_user_action_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_service_attribute_value_events_raw
+TO analytics.service_attribute_value_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_service_attribute_value_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_service_definition_events_raw
+TO analytics.service_definition_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_service_definition_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_muster_roll_events_raw
+TO analytics.muster_roll_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_muster_roll_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_summary_events_raw
+TO analytics.attendance_summary_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_summary_events;

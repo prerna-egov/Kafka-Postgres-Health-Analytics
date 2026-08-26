@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_individual
     given_name                String,
     family_name               String,
     other_names               String,
-    date_of_birth             Date32,
+    date_of_birth             Nullable(Date32),
     gender                    LowCardinality(String),
     blood_group               LowCardinality(String),
     mobile_number             String,
@@ -865,7 +865,6 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
-
 CREATE TABLE IF NOT EXISTS analytics.stg_service_attribute_value
 (
     _ingested_at                 DateTime64(3) DEFAULT now64(3),
@@ -885,7 +884,6 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
 
-
 CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
@@ -902,4 +900,53 @@ CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_muster_roll
+(
+    _ingested_at            DateTime64(3) DEFAULT now64(3),
+    id                      String,
+    tenant_id               LowCardinality(String),
+    musterroll_number       String,
+    attendance_register_id  String,
+    start_date              Int64,
+    end_date                Int64,
+    musterroll_status       LowCardinality(String),
+    status                  LowCardinality(String),
+    additional_details      String,
+    created_by              String,
+    last_modified_by        String,
+    created_time            Int64,
+    last_modified_time      Int64,
+    reference_id            String,
+    service_code            LowCardinality(String),
+    billing_period_id       String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS analytics.stg_attendance_summary
+(
+    _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    id                           String,
+    individual_id                String,
+    muster_roll_id               String,
+    musterroll_number            String,
+    actual_total_attendance      Decimal(12, 2),
+    additional_details           String,
+    created_by                   String,
+    last_modified_by             String,
+    created_time                 Int64,
+    last_modified_time           Int64,
+    modified_total_attendance    Decimal(12, 2),
+    billing_period_id            String,
+    total_registrations          Int64,
+    total_interventions          Int64,
+    tag                          String,
+    role                         LowCardinality(String)
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id)
 SETTINGS index_granularity = 8192;
