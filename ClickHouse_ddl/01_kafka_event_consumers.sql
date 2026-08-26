@@ -400,3 +400,101 @@ SETTINGS
     kafka_num_consumers = 1,
     kafka_max_block_size = 65536,
     kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_referral_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-referral-events',
+    kafka_group_name = 'clickhouse-referral-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_side_effect_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-side-effect-events',
+    kafka_group_name = 'clickhouse-side-effect-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_hf_referral_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-hf-referral-events',
+    kafka_group_name = 'clickhouse-hf-referral-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_individual_address_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-individual-address-events',
+    kafka_group_name = 'clickhouse-individual-address-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_user_action_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-user-action-events',
+    kafka_group_name = 'clickhouse-user-action-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_service_attribute_value_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-service-attribute-value-events',
+    kafka_group_name = 'clickhouse-service-attribute-value-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_service_definition_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'release-name-kafka.kafka-kraft.svc.cluster.local:9092',
+    kafka_topic_list = 'clickhouse-service-definition-events',
+    kafka_group_name = 'clickhouse-service-definition-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;

@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_individual
     given_name                String,
     family_name               String,
     other_names               String,
-    date_of_birth             Date32,
+    date_of_birth             Nullable(Date32),
     gender                    LowCardinality(String),
     blood_group               LowCardinality(String),
     mobile_number             String,
@@ -722,6 +722,181 @@ CREATE TABLE IF NOT EXISTS analytics.stg_expense_lineitem
     last_modified_by      String,
     last_modified_time    Int64,
     additional_details    String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_referral
+(
+    _ingested_at                            DateTime64(3) DEFAULT now64(3),
+    id                                      String,
+    client_reference_id                     String,
+    tenant_id                               LowCardinality(String),
+    project_beneficiary_id                  String,
+    project_beneficiary_client_reference_id String,
+    referrer_id                             String,
+    recipient_id                            String,
+    recipient_type                          LowCardinality(String),
+    reasons                                 String,
+    side_effect_id                          String,
+    side_effect_client_reference_id         String,
+    created_by                              String,
+    created_time                            Int64, 
+    last_modified_by                        String,
+    last_modified_time                      Int64, 
+    client_created_by                       String,
+    client_created_time                     Int64, 
+    client_last_modified_by                 String,
+    client_last_modified_time               Int64, 
+    row_version                             Int64, 
+    is_deleted                              Bool,  
+    additional_details                      String,
+    referral_code                           String,
+    project_id                              String 
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS analytics.stg_side_effect
+(
+    _ingested_at                            DateTime64(3) DEFAULT now64(3),
+    id                                      String,
+    client_reference_id                     String,
+    tenant_id                               LowCardinality(String),
+    task_id                                 String,
+    task_client_reference_id                String,
+    project_beneficiary_id                  String,
+    project_beneficiary_client_reference_id String,
+    symptoms                                String,
+    created_by                              String,
+    created_time                            Int64, 
+    last_modified_by                        String,
+    last_modified_time                      Int64, 
+    client_created_by                       String,
+    client_created_time                     Int64, 
+    client_last_modified_by                 String,
+    client_last_modified_time               Int64, 
+    row_version                             Int64, 
+    is_deleted                              Bool,  
+    additional_details                      String 
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_hf_referral
+(
+    _ingested_at               DateTime64(3) DEFAULT now64(3),
+    id                         String,
+    client_reference_id        String,
+    tenant_id                  LowCardinality(String),
+    project_id                 String,
+    project_facility_id        String,
+    symptom                    String,
+    symptom_survey_id          String,
+    beneficiary_id             String,
+    referral_code              String,
+    national_level_id          String,
+    created_by                 String,
+    created_time               Int64,
+    last_modified_by           String,
+    last_modified_time         Int64,
+    client_created_by          String,
+    client_created_time        Int64,
+    client_last_modified_by    String,
+    client_last_modified_time  Int64,
+    row_version                Int64,
+    is_deleted                 Bool, 
+    additional_details         String,
+    locality_code              String 
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS analytics.stg_individual_address
+(
+    _ingested_at        DateTime64(3) DEFAULT now64(3),
+    individual_id       String,
+    address_id          String,
+    type                LowCardinality(String),
+    created_by          String,
+    last_modified_by    String,
+    created_time        Int64,
+    last_modified_time  Int64,
+    row_version         Int64,
+    is_deleted          Bool
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (individual_id, address_id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_user_action
+(
+    _ingested_at               DateTime64(3) DEFAULT now64(3),
+    id                         String,
+    client_reference_id        String,
+    tenant_id                  LowCardinality(String),
+    project_id                 String,
+    latitude                   Float64,
+    longitude                  Float64,
+    location_accuracy          Int32,
+    boundary_code              LowCardinality(String),
+    action                     LowCardinality(String),
+    beneficiary_tag            String,
+    resource_tag               String,
+    status                     LowCardinality(String),
+    additional_details         String,
+    created_by                 String,
+    created_time               Int64,
+    last_modified_by           String,
+    last_modified_time         Int64,
+    client_created_time        Int64,
+    client_last_modified_time  Int64,
+    client_created_by          String,
+    client_last_modified_by    String,
+    row_version                Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_service_attribute_value
+(
+    _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    id                           String,
+    reference_id                 String,
+    attribute_code               LowCardinality(String),
+    value                        String,
+    created_by                   String,
+    last_modified_by             String,
+    created_time                 Int64,
+    last_modified_time           Int64,
+    additional_details           String,
+    client_reference_id          String,
+    service_client_reference_id  String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
+(
+    _ingested_at        DateTime64(3) DEFAULT now64(3),
+    id                  String,
+    tenant_id           LowCardinality(String),
+    code                String,
+    is_active           Bool,
+    created_by          String,
+    last_modified_by    String,
+    created_time        Int64,
+    last_modified_time  Int64,
+    additional_details  String,
+    client_id           String
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
