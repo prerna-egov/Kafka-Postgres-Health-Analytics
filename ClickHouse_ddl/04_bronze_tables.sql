@@ -800,7 +800,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_hf_referral
     beneficiary_id             String,
     referral_code              String,
     national_level_id          String,
-    created_by                 String
+    created_by                 String,
     created_time               Int64,
     last_modified_by           String,
     last_modified_time         Int64,
