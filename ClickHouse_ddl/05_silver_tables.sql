@@ -268,11 +268,20 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
     name_of_user                            LowCardinality(String),
     role                                    LowCardinality(String),
     user_address                            String,
-    country_code                            LowCardinality(String),
-    region_code                             LowCardinality(String),
-    district_code                           LowCardinality(String),
-    health_facility_code                    LowCardinality(String),
-    settlement_code                         LowCardinality(String),
+    
+    -- Flattened Boundary Hierarchy Fields
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    hierarchy_type                      LowCardinality(String),
+
     task_dates                              Date32,
     boundary_code                           LowCardinality(String),
     additional_details                      String,
@@ -282,7 +291,7 @@ CREATE TABLE IF NOT EXISTS pgr_complaints_entity (
     project_name                            String,
     campaign_number                         LowCardinality(String),
     campaign_id                             LowCardinality(String),
-    INDEX idx_pgr_geo (region_code, district_code, health_facility_code, settlement_code) TYPE set(0) GRANULARITY 1
+    INDEX idx_pgr_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 ) ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
@@ -422,7 +431,6 @@ CREATE TABLE IF NOT EXISTS service_task_entity (
     tenant_id                         LowCardinality(String),
 
     user_id                           String,
-    attributes                        String,
     client_reference_id               String,
     synced_time_stamp                 DateTime64(3, 'UTC'),
     synced_time                       Int64,
@@ -440,6 +448,22 @@ CREATE TABLE IF NOT EXISTS service_task_entity (
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
+CREATE TABLE IF NOT EXISTS service_task_attribute_entity (
+    id                           String,
+    reference_id                 String,
+    attribute_code               LowCardinality(String),
+    value                        String,
+    created_by                   String,
+    last_modified_by             String,
+    created_time                 Int64,
+    last_modified_time           Int64,
+    additional_details           String,
+    client_reference_id          String,
+    service_client_reference_id  String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id)
+SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS stock_reconciliation_entity (
     id                              String,
@@ -1108,4 +1132,117 @@ CREATE TABLE IF NOT EXISTS hf_referral_entity (
 ) 
 ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS user_action_entity (
+    id                                  String,
+    tenant_id                           LowCardinality(String),
+    client_reference_id                 String,
+    latitude                            Float64,
+    longitude                           Float64,
+    location_accuracy                   Float64,
+    boundary_code                       String,
+    action                              LowCardinality(String),
+    beneficiary_tag                     String,
+    resource_tag                        String,
+    is_deleted                          Bool,
+    additional_fields                   String,
+    created_by                          String,
+    last_modified_by                    String,
+    created_time                        Int64,
+    last_modified_time                  Int64,
+    client_created_by                   String,
+    client_last_modified_by             String,
+    client_created_time                 Int64,
+    client_last_modified_time           Int64,
+    project_id                          String,
+    project_type                        LowCardinality(String),
+    project_type_id                     String,
+    user_name                           LowCardinality(String),
+    name_of_user                        LowCardinality(String),
+    role                                LowCardinality(String),
+    synced_time_stamp                   DateTime64(3, 'UTC'),
+    synced_time                         Int64,
+    task_dates                          Date32,
+    synced_date                         Date32,
+    geo_latitude                        Float64,
+    geo_longitude                       Float64,
+    
+     -- Flattened Boundary Hierarchy Fields
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    hierarchy_type                      LowCardinality(String),
+
+    additional_details                  String,
+    project_name                        String,
+    campaign_number                     LowCardinality(String),
+    campaign_id                         LowCardinality(String)
+) 
+ENGINE = ReplacingMergeTree(client_last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS muster_roll_entity (
+    id                                  String,
+    tenant_id                           LowCardinality(String),
+    muster_roll_number                  String,
+    register_id                         String,
+    status                              LowCardinality(String),
+    muster_roll_status                  LowCardinality(String),
+    start_date                          Int64,
+    end_date                            Int64,
+
+    --Individual Entry fields
+    individual_entry_id                 String,
+    individual_id                       String,
+    actual_total_attendance             Decimal(4, 2),
+
+
+    reference_id                        String,
+    service_code                        String,
+    billing_period_id                   String,
+    additional_details                  String,
+    created_by                          String,
+    last_modified_by                    String,
+    created_time                        Int64,
+    last_modified_time                  Int64,
+    edited                              Bool,
+    user_name                           LowCardinality(String),
+    name_of_user                        LowCardinality(String),
+    role                                LowCardinality(String),
+    
+     -- Flattened Boundary Hierarchy Fields
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    hierarchy_type                      LowCardinality(String),
+
+    project_id                          String,
+    project_type                        LowCardinality(String),
+    project_type_id                     String,
+    project_name                        String,
+    campaign_number                     LowCardinality(String),
+    campaign_id                         LowCardinality(String),
+
+    INDEX idx_muster_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1,
+    INDEX idx_muster_role (role) TYPE set(0) GRANULARITY 1
+) 
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id, individual_entry_id)
 SETTINGS index_granularity = 8192;
