@@ -733,10 +733,10 @@ CREATE TABLE IF NOT EXISTS analytics.stg_referral
     id                                      String,
     client_reference_id                     String,
     tenant_id                               LowCardinality(String),
-    project_beneficiary_id                  String
-    project_beneficiary_client_reference_id String
-    referrer_id                             String
-    recipient_id                            String
+    project_beneficiary_id                  String,
+    project_beneficiary_client_reference_id String,
+    referrer_id                             String,
+    recipient_id                            String,
     recipient_type                          LowCardinality(String),
     reasons                                 String,
     side_effect_id                          String,
@@ -810,7 +810,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_hf_referral
     client_last_modified_time  Int64,
     row_version                Int64,
     is_deleted                 Bool, 
-    additional_details         String
+    additional_details         String,
     locality_code              String 
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
@@ -822,7 +822,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_individual_address
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
     individual_id       String,
-    address_id          String, 
+    address_id          String,
     type                LowCardinality(String),
     created_by          String,
     last_modified_by    String,
@@ -833,4 +833,79 @@ CREATE TABLE IF NOT EXISTS analytics.stg_individual_address
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (individual_id, address_id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS analytics.stg_user_action
+(
+    _ingested_at               DateTime64(3) DEFAULT now64(3),
+    id                         String,
+    client_reference_id        String,
+    tenant_id                  LowCardinality(String),
+    project_id                 String,
+    latitude                   Float64,
+    longitude                  Float64,
+    location_accuracy          Int32,
+    boundary_code              LowCardinality(String),
+    action                     LowCardinality(String),
+    beneficiary_tag            String,
+    resource_tag               String,
+    status                     LowCardinality(String),
+    additional_details         String,
+    created_by                 String,
+    created_time               Int64,
+    last_modified_by           String,
+    last_modified_time         Int64,
+    client_created_time        Int64,
+    client_last_modified_time  Int64,
+    client_created_by          String,
+    client_last_modified_by    String,
+    row_version                Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+-- Source: Postgres `service_attribute_value` table (as provided directly).
+-- Deviates from this file's default shape: NO tenant_id at all (confirmed,
+-- not present in the source schema) -- ReplacingMergeTree is still keyed
+-- on last_modified_time, but ORDER BY drops tenant_id, same precedent as
+-- this file's existing stg_project_target/stg_individual_address tables.
+CREATE TABLE IF NOT EXISTS analytics.stg_service_attribute_value
+(
+    _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    id                           String,
+    reference_id                 String,
+    attribute_code               LowCardinality(String),
+    value                        String,
+    created_by                   String,
+    last_modified_by             String,
+    created_time                 Int64,
+    last_modified_time           Int64,
+    additional_details           String,
+    client_reference_id          String,
+    service_client_reference_id  String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id)
+SETTINGS index_granularity = 8192;
+
+-- Source: Postgres `eg_service_definition` table (service-request service).
+-- Reconstructed from db/migration/main: V20230221133034__servicedefinition_create_ddl.sql,
+-- V20241115143930__servicedefinition_alter_ddl.sql (code widened to varchar(256), no column change).
+CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
+(
+    _ingested_at        DateTime64(3) DEFAULT now64(3),
+    id                  String,
+    tenant_id           LowCardinality(String),
+    code                String,
+    is_active           Bool,
+    created_by          String,
+    last_modified_by    String,
+    created_time        Int64,
+    last_modified_time  Int64,
+    additional_details  String,
+    client_id           String
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
