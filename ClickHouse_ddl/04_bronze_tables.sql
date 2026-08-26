@@ -865,11 +865,7 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Source: Postgres `service_attribute_value` table (as provided directly).
--- Deviates from this file's default shape: NO tenant_id at all (confirmed,
--- not present in the source schema) -- ReplacingMergeTree is still keyed
--- on last_modified_time, but ORDER BY drops tenant_id, same precedent as
--- this file's existing stg_project_target/stg_individual_address tables.
+
 CREATE TABLE IF NOT EXISTS analytics.stg_service_attribute_value
 (
     _ingested_at                 DateTime64(3) DEFAULT now64(3),
@@ -889,9 +885,7 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
 
--- Source: Postgres `eg_service_definition` table (service-request service).
--- Reconstructed from db/migration/main: V20230221133034__servicedefinition_create_ddl.sql,
--- V20241115143930__servicedefinition_alter_ddl.sql (code widened to varchar(256), no column change).
+
 CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),

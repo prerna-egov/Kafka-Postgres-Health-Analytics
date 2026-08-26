@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 BOUNDARY_BASE_URL_VARIABLE = "egov_boundary_service_base_url"
 USER_BASE_URL_VARIABLE = "egov_user_service_base_url"
 MDMS_BASE_URL_VARIABLE = "egov_mdms_service_base_url"
+WORKFLOW_BASE_URL_VARIABLE = "egov_workflow_service_base_url"
 
 BOUNDARY_RELATIONSHIP_SEARCH_PATH = "/boundary-service/boundary-relationships/_search"
 USER_SEARCH_PATH = "/user/_search"
@@ -36,6 +37,10 @@ USER_SEARCH_PATH = "/user/_search"
 MDMS_SEARCH_PATH = "/egov-mdms-service/v1/_search"
 PROJECT_STAFF_ROLES_MODULE = "HCM-PROJECT-STAFF-ROLES"
 PROJECT_STAFF_ROLES_MASTER = "projectStaffRoles"
+# Standard DIGIT egov-workflow-v2 search path -- NOT verified against a live
+# instance in this repo (unlike BOUNDARY_RELATIONSHIP_SEARCH_PATH/USER_SEARCH_PATH/
+# MDMS_SEARCH_PATH, which were).
+WORKFLOW_PROCESS_SEARCH_PATH = "/egov-wf/process/_search"
 
 BOUNDARY_LEVEL_ORDINALS = [
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -270,6 +275,29 @@ def parse_project_beneficiary_type(additional_details) -> str | None:
     project_type = parsed.get("projectType") if isinstance(parsed, dict) else None
     beneficiary_type = project_type.get("beneficiaryType") if isinstance(project_type, dict) else None
     return beneficiary_type or None
+
+
+def parse_boundary_code(additional_details) -> str | None:
+    """
+    Mirrors CommonUtils.java's getLocalityCodeFromAdditionalFields(null, additionalDetails):
+    an object with a `boundaryCode` key -> that value; a bare JSON string -> that
+    string itself; anything else (missing/malformed/other JSON type) -> None.
+    Distinct from parse_hierarchy_type (additionalDetails.hierarchyType) and
+    parse_additional_fields ({"fields":[...]} shape) -- this is a third,
+    narrower additionalDetails shape used only by attendee/attendance-log
+    boundary resolution.
+    """
+    if not additional_details:
+        return None
+    try:
+        parsed = json.loads(additional_details)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(parsed, dict):
+        return parsed.get("boundaryCode") or None
+    if isinstance(parsed, str):
+        return parsed or None
+    return None
 
 
 DAY_MILLIS = 86_400_000
@@ -659,3 +687,83 @@ def resolve_user_info(lookup_keys: set[tuple[str, str]]) -> dict[tuple[str, str]
     """Calls get_user_info once per unique (tenant_id, user_id) key (cheap
     beyond the first call per process thanks to _user_info_cache)."""
     return {key: get_user_info(*key) for key in lookup_keys}
+
+
+# --- Workflow summary --------------------------------------------------------
+#
+# Mirrors BillService.java's getWorkflowSummary()/searchProcessInstances().
+# Unlike boundary/user lookups, this is deliberately NOT cached indefinitely
+# (no module-level cache dict) -- workflow status is far more volatile than a
+# user's name or a boundary tree, so caching it for a whole (potentially
+# long-lived) worker process risks serving stale status. Each call re-resolves
+# fresh; only within-one-call duplicates are avoided, via the caller's own set
+# dedup (same as every other resolve_* function here).
+
+
+def _fetch_process_instances(tenant_id: str, business_id: str) -> list[dict]:
+    """Mirrors BillService.java's searchProcessInstances(businessId, tenantId, history=true)."""
+    try:
+        response = requests.post(
+            f"{_get_base_url(WORKFLOW_BASE_URL_VARIABLE)}{WORKFLOW_PROCESS_SEARCH_PATH}",
+            params={"tenantId": tenant_id, "businessIds": business_id, "history": "true"},
+            json={"RequestInfo": _build_request_info()},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("ProcessInstances") or []
+    except Exception:
+        log.exception(
+            "workflow process-instance search failed for %s/%s; returning empty result",
+            tenant_id, business_id,
+        )
+        return []
+
+
+def get_workflow_summary(tenant_id: str, business_id: str) -> dict:
+    """
+    Mirrors BillService.java's getWorkflowSummary(): currentStatus (latest
+    instance's applicationStatus), timeTakenFromInitialState (minutes,
+    latest-vs-oldest createdTime), statusTransitionTimes (a map of
+    "{older_status}_TO_{newer_status}" -> minutes, over each adjacent pair,
+    latest-first per the assumed response order -- skipping any pair with a
+    missing state rather than raising). Returns {} if no process instances
+    are found. Also returns the raw latest instance under "_latestInstance"
+    for callers approximating a raw process_instance passthrough column
+    (Java's own Bill.processInstance/.wfStatus fields aren't computed here,
+    they arrive pre-populated on the incoming payload -- not part of Java's
+    own wfStatusInfo shape, an addition specific to this port).
+    """
+    instances = _fetch_process_instances(tenant_id, business_id)
+    if not instances:
+        return {}
+
+    latest, oldest = instances[0], instances[-1]
+    result: dict = {"_latestInstance": latest}
+
+    if latest.get("state"):
+        result["currentStatus"] = latest["state"].get("applicationStatus")
+
+    latest_created = (latest.get("auditDetails") or {}).get("createdTime")
+    oldest_created = (oldest.get("auditDetails") or {}).get("createdTime")
+    if latest_created is not None and oldest_created is not None:
+        result["timeTakenFromInitialState"] = int((latest_created - oldest_created) / 60000)
+
+    transitions = {}
+    for i in range(len(instances) - 1):
+        newer, older = instances[i], instances[i + 1]
+        if not newer.get("state") or not older.get("state"):
+            continue
+        newer_created = (newer.get("auditDetails") or {}).get("createdTime")
+        older_created = (older.get("auditDetails") or {}).get("createdTime")
+        if newer_created is None or older_created is None:
+            continue
+        key = f"{older['state'].get('applicationStatus')}_TO_{newer['state'].get('applicationStatus')}"
+        transitions[key] = int((newer_created - older_created) / 60000)
+    result["statusTransitionTimes"] = transitions
+
+    return result
+
+
+def resolve_workflow_summaries(lookup_keys: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+    """Calls get_workflow_summary once per unique (tenant_id, business_id) key."""
+    return {key: get_workflow_summary(*key) for key in lookup_keys}
