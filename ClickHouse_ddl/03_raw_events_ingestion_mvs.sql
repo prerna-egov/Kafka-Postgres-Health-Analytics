@@ -218,3 +218,15 @@ TO analytics.service_definition_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_service_definition_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_muster_roll_events_raw
+TO analytics.muster_roll_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_muster_roll_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_attendance_summary_events_raw
+TO analytics.attendance_summary_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_attendance_summary_events;
