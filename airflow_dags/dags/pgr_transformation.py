@@ -55,7 +55,8 @@ SILVER_COLUMNS = [
     "address_geo_additional_details",
     "created_by", "last_modified_by", "created_time", "last_modified_time",
     "user_name", "name_of_user", "role", "user_address",
-    "country_code", "region_code", "district_code", "health_facility_code", "settlement_code",
+    "level_one_code", "level_two_code", "level_three_code", "level_four_code", "level_five_code",
+    "level_six_code", "level_seven_code", "level_eight_code", "level_nine_code", "hierarchy_type",
     "task_dates", "boundary_code", "additional_details",
     "project_id", "project_type", "project_type_id", "project_name", "campaign_number", "campaign_id",
 ]
@@ -153,8 +154,9 @@ def _get_boundary_lookup_key(row: dict) -> tuple[str, str, str] | None:
     is the joined address's own `locality` column (confirmed to be a real
     boundary code, not a display string). Feeds the exact same
     extract_boundary_lookup_keys/resolve_boundary_levels/attach_boundary_levels
-    helpers every other entity uses; only the final column names differ
-    (see _build_silver_row's level_one..five remap).
+    helpers every other entity uses, with the same level_one_code..
+    level_nine_code/hierarchy_type column names on write (see
+    _build_silver_row).
     """
     hierarchy_type = row.get("hierarchy_type")
     if not hierarchy_type:
@@ -264,10 +266,9 @@ def _default_date(epoch_ms):
 def _build_silver_row(row: dict) -> dict:
     """
     Maps one fully-enriched joined_rows dict onto pgr_complaints_entity's
-    exact column set. country_code/region_code/district_code/
-    health_facility_code/settlement_code are a pure rename of
-    level_one_code..level_five_code (attach_boundary_levels already
-    resolved them the same way every other entity does) -- no new
+    exact column set. level_one_code..level_nine_code/hierarchy_type are
+    passed straight through from attach_boundary_levels, which already
+    resolved them the same way every other entity does -- no new
     boundary logic. complainant_* has no bronze source at all (Service.user
     isn't modeled in bronze yet) and is defaulted; additional_details is
     always "" (PGRIndex has no such field in Java); service_code/
@@ -314,11 +315,16 @@ def _build_silver_row(row: dict) -> dict:
         "name_of_user": _default_str(row.get("name_of_user")),
         "role": _default_str(row.get("role")),
         "user_address": _default_str(row.get("user_address")),
-        "country_code": _default_str(row.get("level_one_code")),
-        "region_code": _default_str(row.get("level_two_code")),
-        "district_code": _default_str(row.get("level_three_code")),
-        "health_facility_code": _default_str(row.get("level_four_code")),
-        "settlement_code": _default_str(row.get("level_five_code")),
+        "level_one_code": _default_str(row.get("level_one_code")),
+        "level_two_code": _default_str(row.get("level_two_code")),
+        "level_three_code": _default_str(row.get("level_three_code")),
+        "level_four_code": _default_str(row.get("level_four_code")),
+        "level_five_code": _default_str(row.get("level_five_code")),
+        "level_six_code": _default_str(row.get("level_six_code")),
+        "level_seven_code": _default_str(row.get("level_seven_code")),
+        "level_eight_code": _default_str(row.get("level_eight_code")),
+        "level_nine_code": _default_str(row.get("level_nine_code")),
+        "hierarchy_type": _default_str(row.get("hierarchy_type")),
         "task_dates": _default_date(row.get("last_modified_time")),
         "boundary_code": _default_str(row.get("address_locality_raw")),
         "additional_details": "",  # PGRIndex has no additionalDetails field in Java
