@@ -950,3 +950,24 @@ CREATE TABLE IF NOT EXISTS analytics.stg_attendance_summary
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
+
+
+
+CREATE TABLE IF NOT EXISTS analytics.stg_device_tokens
+(
+    _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    id                           String,
+    user_id                      String,
+    device_type                  LowCardinality(String),
+    tenant_id                    LowCardinality(String),
+    created_by                   String,
+    last_modified_by             String,
+    created_time                 Int64,
+    last_modified_time           Int64,
+    facility_id                  String,
+    user_roles                   LowCardinality(String)
+
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id)
+SETTINGS index_granularity = 8192;
