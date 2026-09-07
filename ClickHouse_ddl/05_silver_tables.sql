@@ -628,7 +628,7 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
     --TODO: add default values
     age                                     UInt32,
     gender                                  LowCardinality(String),
-    date_of_birth                           Date,
+    date_of_birth                           Date32,
 
     cycleIndex                              UInt8,
     doseIndex                               UInt8,

@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS analytics.stg_individual
     given_name                String,
     family_name               String,
     other_names               String,
-    date_of_birth             Nullable(Date32),
+    date_of_birth             Date32,
     gender                    LowCardinality(String),
     blood_group               LowCardinality(String),
     mobile_number             String,
