@@ -83,27 +83,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -115,7 +132,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -123,22 +140,43 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
 def _fetch_enriched_household_rows(client, household_ids: list[str]) -> list[dict]:
     """
     Left-joins this chunk's stg_household rows with their own stg_address
-    row (household has zero or one address, via address_id). `hh.*` is
-    safe here (unlike the project_staff/project_beneficiary joins against
-    stg_project, which share several column names) since stg_address's
-    columns don't collide with stg_household's own.
+    row (household has zero or one address, via address_id). hh's own
+    columns are individually aliased rather than `hh.*` -- stg_address
+    does share several column names with stg_household (id, tenant_id,
+    client_reference_id), and ClickHouse can silently qualify those as
+    `hh.<col>` once another join is added, breaking downstream lookups
+    expecting bare names; explicit aliasing avoids that landmine even
+    though this specific 2-table join doesn't trigger it today. FINAL is
+    used on the joined bronze table to avoid row fan-out from un-merged
+    ReplacingMergeTree duplicate versions.
     """
     result = client.query(
         f"""
         SELECT
-            hh.*,
+            hh.id                         AS id,
+            hh.tenant_id                  AS tenant_id,
+            hh.client_reference_id        AS client_reference_id,
+            hh.member_count               AS member_count,
+            hh.address_id                 AS address_id,
+            hh.additional_details         AS additional_details,
+            hh.created_by                 AS created_by,
+            hh.last_modified_by           AS last_modified_by,
+            hh.created_time               AS created_time,
+            hh.last_modified_time         AS last_modified_time,
+            hh.client_created_time        AS client_created_time,
+            hh.client_last_modified_time  AS client_last_modified_time,
+            hh.client_created_by          AS client_created_by,
+            hh.client_last_modified_by    AS client_last_modified_by,
+            hh.row_version                AS row_version,
+            hh.is_deleted                 AS is_deleted,
+            hh.household_type             AS household_type,
             addr.latitude          AS address_latitude,
             addr.longitude         AS address_longitude,
             addr.location_accuracy AS address_location_accuracy,
             addr.type               AS address_type,
             addr.locality_code      AS address_locality_code
         FROM {BRONZE_TABLE} AS hh
-        LEFT JOIN {ADDRESS_TABLE} AS addr
+        LEFT JOIN {ADDRESS_TABLE} AS addr FINAL
             ON addr.id = hh.address_id AND addr.tenant_id = hh.tenant_id
         WHERE hh.id IN %(household_ids)s
         """,

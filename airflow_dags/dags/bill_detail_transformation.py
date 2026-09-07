@@ -88,27 +88,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -120,7 +137,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -133,13 +150,35 @@ def _fetch_enriched_billdetail_rows(client, detail_ids: list[str]) -> list[dict]
     trip) and their own stg_expense_party row (the bill detail's payee,
     same reverse-FK shape as bill_transformation.py's payer join).
 
-    LIMIT 1 BY bd.id guards against an unexpected multi-party match. bd.*
-    is safe.
+    LIMIT 1 BY bd.id guards against an unexpected multi-party match. bd's
+    own columns are individually aliased rather than `bd.*` -- with 2+
+    joined tables, ClickHouse silently qualifies any bd column whose bare
+    name collides with a column in b/party as `bd.<col>` in the result
+    set, breaking downstream lookups expecting bare names. FINAL is used
+    on both joined tables to avoid row versions from un-merged
+    ReplacingMergeTree duplicates.
     """
     result = client.query(
         f"""
         SELECT
-            bd.*,
+            bd.id                   AS id,
+            bd.tenant_id             AS tenant_id,
+            bd.reference_id          AS reference_id,
+            bd.bill_id               AS bill_id,
+            bd.total_amount          AS total_amount,
+            bd.total_paid_amount     AS total_paid_amount,
+            bd.payment_status        AS payment_status,
+            bd.status                AS status,
+            bd.from_period           AS from_period,
+            bd.to_period             AS to_period,
+            bd.net_line_item_amount  AS net_line_item_amount,
+            bd.total_attendance      AS total_attendance,
+            bd.worker_id             AS worker_id,
+            bd.created_by            AS created_by,
+            bd.created_time          AS created_time,
+            bd.last_modified_by      AS last_modified_by,
+            bd.last_modified_time    AS last_modified_time,
+            bd.additional_details    AS additional_details,
             b.locality_code          AS bill_locality_code,
             b.bill_number            AS bill_bill_number,
             party.id                 AS payee_party_id,
@@ -153,9 +192,9 @@ def _fetch_enriched_billdetail_rows(client, detail_ids: list[str]) -> list[dict]
             party.beneficiary_code   AS payee_beneficiary_code,
             party.status             AS payee_status
         FROM {BRONZE_TABLE} AS bd
-        LEFT JOIN {BILL_TABLE} AS b
+        LEFT JOIN {BILL_TABLE} AS b FINAL
             ON b.id = bd.bill_id AND b.tenant_id = bd.tenant_id
-        LEFT JOIN {PARTY_TABLE} AS party
+        LEFT JOIN {PARTY_TABLE} AS party FINAL
             ON party.parent_id = bd.id AND party.tenant_id = bd.tenant_id
         WHERE bd.id IN %(detail_ids)s
         ORDER BY party.id ASC

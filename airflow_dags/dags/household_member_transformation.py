@@ -85,27 +85,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -117,7 +134,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -137,29 +154,53 @@ def _fetch_enriched_household_member_rows(client, household_member_ids: list[str
     Member.getHouseholdClientReferenceId(), ...), the client-reference-id
     path, so joining on the plain id column here would be a real bug.
 
-    `hm.*` is safe (no column-name collision with the aliased join
-    columns). hh/ind are filtered is_deleted=false (bridge/child-style
-    lookups, consistent with every other household/individual join in
-    this codebase); stg_address has no is_deleted column.
+    hm's own columns are individually aliased rather than `hm.*` -- with
+    3+ joined tables, ClickHouse silently qualifies any hm column whose
+    bare name collides with a column in *any* joined table (even one
+    never explicitly selected) as `hm.<col>` in the result set, which
+    breaks every downstream lookup expecting bare names like `id` or
+    `client_last_modified_by`. hh/ind are filtered is_deleted=false
+    (bridge/child-style lookups, consistent with every other household/
+    individual join in this codebase); stg_address has no is_deleted
+    column. FINAL is used on every joined bronze table to avoid row
+    fan-out from un-merged ReplacingMergeTree duplicate versions.
     """
     result = client.query(
         f"""
         SELECT
-            hm.*,
-            hh.additional_details      AS household_additional_details_raw,
-            addr.latitude              AS address_latitude,
-            addr.longitude             AS address_longitude,
-            addr.locality_code         AS address_locality_code,
-            ind.date_of_birth          AS individual_date_of_birth,
-            ind.gender                 AS individual_gender,
-            ind.additional_details     AS individual_additional_details_raw
+            hm.id                             AS id,
+            hm.client_reference_id            AS client_reference_id,
+            hm.tenant_id                      AS tenant_id,
+            hm.individual_id                  AS individual_id,
+            hm.individual_client_reference_id AS individual_client_reference_id,
+            hm.household_id                   AS household_id,
+            hm.household_client_reference_id  AS household_client_reference_id,
+            hm.is_head_of_household           AS is_head_of_household,
+            hm.additional_details             AS additional_details,
+            hm.created_by                     AS created_by,
+            hm.created_time                   AS created_time,
+            hm.last_modified_by               AS last_modified_by,
+            hm.last_modified_time             AS last_modified_time,
+            hm.client_created_time            AS client_created_time,
+            hm.client_last_modified_time      AS client_last_modified_time,
+            hm.client_created_by              AS client_created_by,
+            hm.client_last_modified_by        AS client_last_modified_by,
+            hm.row_version                    AS row_version,
+            hm.is_deleted                     AS is_deleted,
+            hh.additional_details             AS household_additional_details_raw,
+            addr.latitude                     AS address_latitude,
+            addr.longitude                    AS address_longitude,
+            addr.locality_code                AS address_locality_code,
+            ind.date_of_birth                 AS individual_date_of_birth,
+            ind.gender                        AS individual_gender,
+            ind.additional_details            AS individual_additional_details_raw
         FROM {BRONZE_TABLE} AS hm
-        LEFT JOIN {HOUSEHOLD_TABLE} AS hh
+        LEFT JOIN {HOUSEHOLD_TABLE} AS hh FINAL
             ON hh.client_reference_id = hm.household_client_reference_id AND hh.tenant_id = hm.tenant_id
             AND hh.is_deleted = false
-        LEFT JOIN {ADDRESS_TABLE} AS addr
+        LEFT JOIN {ADDRESS_TABLE} AS addr FINAL
             ON addr.id = hh.address_id AND addr.tenant_id = hh.tenant_id
-        LEFT JOIN {INDIVIDUAL_TABLE} AS ind
+        LEFT JOIN {INDIVIDUAL_TABLE} AS ind FINAL
             ON ind.client_reference_id = hm.individual_client_reference_id AND ind.tenant_id = hm.tenant_id
             AND ind.is_deleted = false
         WHERE hm.id IN %(household_member_ids)s

@@ -81,27 +81,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -113,7 +130,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
