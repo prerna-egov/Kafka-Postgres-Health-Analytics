@@ -76,27 +76,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -108,7 +125,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -129,11 +146,40 @@ def _fetch_enriched_muster_roll_rows(client, muster_roll_ids: list[str]) -> list
     lastModifiedBy bridge (lm_staff/lm_proj) feeds project_id/project_type/
     project_type_id/project_name/campaign_number directly, already aliased
     to their final silver column names.
+
+    mr's own columns are individually aliased rather than `mr.*` -- with
+    2+ joined tables, ClickHouse silently qualifies any mr column whose
+    bare name collides with a column in asum/cb_proj/lm_proj (e.g. id,
+    tenant_id, additional_details, created_by, last_modified_by,
+    created_time, last_modified_time, reference_id) as `mr.<col>` in the
+    result set, breaking downstream lookups expecting bare names --
+    including `row["tenant_id"]`, the same failure mode as the reported
+    attendee_transformation.py crash. FINAL is added on
+    stg_attendance_summary/stg_project/stg_project_address to avoid
+    duplicate *versions* of the same joined row without changing the
+    intentional one-row-per-attendance-summary-entry fan-out; cb_staff/
+    lm_staff already dedupe via their own ORDER BY/LIMIT BY subqueries and
+    are left unchanged.
     """
     result = client.query(
         f"""
         SELECT
-            mr.*,
+            mr.id                     AS id,
+            mr.tenant_id              AS tenant_id,
+            mr.musterroll_number      AS musterroll_number,
+            mr.attendance_register_id AS attendance_register_id,
+            mr.start_date             AS start_date,
+            mr.end_date               AS end_date,
+            mr.musterroll_status      AS musterroll_status,
+            mr.status                 AS status,
+            mr.additional_details     AS additional_details,
+            mr.created_by             AS created_by,
+            mr.last_modified_by       AS last_modified_by,
+            mr.created_time           AS created_time,
+            mr.last_modified_time     AS last_modified_time,
+            mr.reference_id           AS reference_id,
+            mr.service_code           AS service_code,
+            mr.billing_period_id      AS billing_period_id,
             asum.id                       AS individual_entry_id,
             asum.individual_id            AS individual_id,
             asum.actual_total_attendance  AS actual_total_attendance,
@@ -145,7 +191,7 @@ def _fetch_enriched_muster_roll_rows(client, muster_roll_ids: list[str]) -> list
             lm_proj.name                  AS project_name,
             lm_proj.reference_id          AS campaign_number
         FROM {BRONZE_TABLE} AS mr
-        LEFT JOIN analytics.stg_attendance_summary AS asum
+        LEFT JOIN analytics.stg_attendance_summary AS asum FINAL
             ON asum.muster_roll_id = mr.id
         LEFT JOIN (
             SELECT staff_id, project_id, tenant_id
@@ -155,9 +201,9 @@ def _fetch_enriched_muster_roll_rows(client, muster_roll_ids: list[str]) -> list
             LIMIT 1 BY staff_id
         ) AS cb_staff
             ON cb_staff.staff_id = mr.created_by AND cb_staff.tenant_id = mr.tenant_id
-        LEFT JOIN analytics.stg_project AS cb_proj
+        LEFT JOIN analytics.stg_project AS cb_proj FINAL
             ON cb_proj.id = cb_staff.project_id AND cb_proj.tenant_id = cb_staff.tenant_id
-        LEFT JOIN analytics.stg_project_address AS cb_addr
+        LEFT JOIN analytics.stg_project_address AS cb_addr FINAL
             ON cb_addr.project_id = cb_proj.id AND cb_addr.tenant_id = cb_proj.tenant_id
         LEFT JOIN (
             SELECT staff_id, project_id, tenant_id
@@ -167,7 +213,7 @@ def _fetch_enriched_muster_roll_rows(client, muster_roll_ids: list[str]) -> list
             LIMIT 1 BY staff_id
         ) AS lm_staff
             ON lm_staff.staff_id = mr.last_modified_by AND lm_staff.tenant_id = mr.tenant_id
-        LEFT JOIN analytics.stg_project AS lm_proj
+        LEFT JOIN analytics.stg_project AS lm_proj FINAL
             ON lm_proj.id = lm_staff.project_id AND lm_proj.tenant_id = lm_staff.tenant_id
         WHERE mr.id IN %(muster_roll_ids)s
         """,

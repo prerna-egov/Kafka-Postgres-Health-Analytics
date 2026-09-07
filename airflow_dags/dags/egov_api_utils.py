@@ -10,22 +10,52 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Callable
 
 import pendulum
 import requests
-from airflow.models import Variable
+from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
 
-# Each DIGIT service can live on its own host, so each gets its own Variable
+
+_ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+load_dotenv(_ENV_FILE)
+
+# Each DIGIT service can live on its own host, so each gets its own env var
 # rather than sharing one base URL (boundary-service and user-service are on
-# different hosts/ports even in this local dev setup).
-BOUNDARY_BASE_URL_VARIABLE = "egov_boundary_service_base_url"
-USER_BASE_URL_VARIABLE = "egov_user_service_base_url"
-MDMS_BASE_URL_VARIABLE = "egov_mdms_service_base_url"
-WORKFLOW_BASE_URL_VARIABLE = "egov_workflow_service_base_url"
+# different hosts/ports even in this local dev setup). These are env vars,
+# not Airflow Variables, because they're read once per row/chunk across
+# every entity DAG -- Variable.get() is a network round-trip to the Airflow
+# webserver/metadata DB per call, which balloons task time/memory at that
+# call volume, whereas os.getenv() is a zero-cost in-process read. Read once
+# here at import time into a plain constant (no wrapper function) so every
+# call site below just uses the value directly. In production these are set
+# directly on the worker container by the Helm chart; for local dev, fill in
+# airflow_dags/.env (see README.md) 
+BOUNDARY_SERVICE_BASE_URL = os.getenv("EGOV_BOUNDARY_SERVICE_BASE_URL")
+USER_SERVICE_BASE_URL = os.getenv("EGOV_USER_SERVICE_BASE_URL")
+MDMS_SERVICE_BASE_URL = os.getenv("EGOV_MDMS_SERVICE_BASE_URL")
+WORKFLOW_SERVICE_BASE_URL = os.getenv("EGOV_WORKFLOW_SERVICE_BASE_URL")
+
+# Sticky "warn once, then skip" tracker: a call site checks its own base URL
+# and calls _warn_url_missing_once instead of attempting (and then logging
+# the failure of) a doomed request -- these constants can't change mid
+# process, so there's nothing to gain from retrying, only redundant log
+# noise to avoid.
+_url_missing_warned: set[str] = set()
+
+
+def _warn_url_missing_once(env_var_name: str, service_label: str) -> None:
+    if env_var_name in _url_missing_warned:
+        return
+    _url_missing_warned.add(env_var_name)
+    log.warning(
+        "%s is not set; skipping %s calls for the rest of this process.",
+        env_var_name, service_label,
+    )
 
 BOUNDARY_RELATIONSHIP_SEARCH_PATH = "/boundary-service/boundary-relationships/_search"
 USER_SEARCH_PATH = "/user/_search"
@@ -34,7 +64,7 @@ USER_SEARCH_PATH = "/user/_search"
 # config referenced (that config was for a different environment) --
 # request/response shape (MdmsCriteria in, MdmsRes out) is otherwise
 # identical between the two.
-MDMS_SEARCH_PATH = "/egov-mdms-service/v1/_search"
+MDMS_SEARCH_PATH = "/mdms-v2/v1/_search"
 PROJECT_STAFF_ROLES_MODULE = "HCM-PROJECT-STAFF-ROLES"
 PROJECT_STAFF_ROLES_MASTER = "projectStaffRoles"
 # Standard DIGIT egov-workflow-v2 search path -- NOT verified against a live
@@ -51,10 +81,6 @@ _boundary_tree_cache: dict[tuple[str, str], list[dict]] = {}
 _bulk_codes_supported = True  # sticky; set False on first bulk failure, never retried this process
 _user_info_cache: dict[tuple[str, str], dict] = {}
 _project_staff_role_rank_cache: dict[str, dict[str, int]] = {}
-
-
-def _get_base_url(variable_name: str) -> str:
-    return Variable.get(variable_name)
 
 
 def _build_request_info() -> dict:
@@ -105,7 +131,7 @@ def _fetch_boundary_paths_bulk(tenant_id: str, hierarchy_type: str, codes: list[
     not the whole tree.
     """
     response = requests.post(
-        f"{_get_base_url(BOUNDARY_BASE_URL_VARIABLE)}{BOUNDARY_RELATIONSHIP_SEARCH_PATH}",
+        f"{BOUNDARY_SERVICE_BASE_URL}{BOUNDARY_RELATIONSHIP_SEARCH_PATH}",
         params={
             "tenantId": tenant_id,
             "hierarchyType": hierarchy_type,
@@ -132,7 +158,7 @@ def _fetch_boundary_tree(tenant_id: str, hierarchy_type: str) -> list[dict]:
 
     try:
         response = requests.post(
-            f"{_get_base_url(BOUNDARY_BASE_URL_VARIABLE)}{BOUNDARY_RELATIONSHIP_SEARCH_PATH}",
+            f"{BOUNDARY_SERVICE_BASE_URL}{BOUNDARY_RELATIONSHIP_SEARCH_PATH}",
             params={
                 "tenantId": tenant_id,
                 "hierarchyType": hierarchy_type,
@@ -179,28 +205,33 @@ def get_boundary_hierarchy_levels_bulk(tenant_id: str, hierarchy_type: str, boun
     ]
 
     if uncached:
-        resolved: dict = {}
-        if _bulk_codes_supported:
-            try:
-                resolved = _fetch_boundary_paths_bulk(tenant_id, hierarchy_type, uncached)
-            except Exception:
-                log.warning(
-                    "bulk codes= boundary lookup failed for %s/%s; falling back to "
-                    "whole-tree fetch for the rest of this run",
-                    tenant_id, hierarchy_type,
-                )
-                _bulk_codes_supported = False
+        if not BOUNDARY_SERVICE_BASE_URL:
+            _warn_url_missing_once("EGOV_BOUNDARY_SERVICE_BASE_URL", "boundary-service")
+            for code in uncached:
+                _boundary_path_cache[(tenant_id, hierarchy_type, code)] = []
+        else:
+            resolved: dict = {}
+            if _bulk_codes_supported:
+                try:
+                    resolved = _fetch_boundary_paths_bulk(tenant_id, hierarchy_type, uncached)
+                except Exception:
+                    log.warning(
+                        "bulk codes= boundary lookup failed for %s/%s; falling back to "
+                        "whole-tree fetch for the rest of this run",
+                        tenant_id, hierarchy_type,
+                    )
+                    _bulk_codes_supported = False
 
-        if not _bulk_codes_supported:
-            tree = _fetch_boundary_tree(tenant_id, hierarchy_type)
-            resolved = _find_boundary_paths(tree, set(uncached))
+            if not _bulk_codes_supported:
+                tree = _fetch_boundary_tree(tenant_id, hierarchy_type)
+                resolved = _find_boundary_paths(tree, set(uncached))
 
-        for code in uncached:
-            path = resolved.get(code)
-            if path is None:
-                log.warning("boundary code %s not found for %s/%s", code, tenant_id, hierarchy_type)
-                path = []
-            _boundary_path_cache[(tenant_id, hierarchy_type, code)] = path
+            for code in uncached:
+                path = resolved.get(code)
+                if path is None:
+                    log.warning("boundary code %s not found for %s/%s", code, tenant_id, hierarchy_type)
+                    path = []
+                _boundary_path_cache[(tenant_id, hierarchy_type, code)] = path
 
     result = {}
     for code in boundary_codes:
@@ -547,17 +578,37 @@ def attach_boundary_levels(rows: list[dict], resolved_levels: dict, get_key: Bou
 
 # --- User search + info ------------------------------------------------------
 #
-# Mirrors UserService.java's getUsers()/getUserInfo(). Unlike boundary search,
-# this deliberately does NOT batch multiple uuids into one call -- Java's own
-# usage never does either, despite the request DTO supporting a list, and
-# that's a conscious choice here too (not an oversight).
+# Mirrors UserService.java's getUsers()/getUserInfo(). get_user_info (a
+# standalone single-uuid lookup) still calls _fetch_users one uuid at a time,
+# matching Java's own usage. resolve_user_info -- the bulk per-chunk entry
+# point every entity DAG actually uses -- batches instead, via
+# _fetch_users_batch: with a chunk of thousands of rows resolving down to
+# only a few thousand unique (tenant_id, user_id) pairs, one call per user
+# means, if user-service is down for any part of a run, thousands of
+# individual failed-call log lines (each with a full traceback) -- exactly
+# the kind of Airflow-log-flooding this batches away. A short outage that
+# self-resolves mid-run (a real possibility under Kubernetes -- a pod
+# restart, a rolling deploy) isn't treated as "down for the rest of this
+# process" by anything here; every batch is still attempted independently,
+# so recovery is picked up on the very next batch with no special handling
+# needed, and any rows that stay unresolved just get re-processed cleanly on
+# a later run of the same window (project_task_entity's own
+# ReplacingMergeTree dedupes on rewrite) via the orchestrator's window
+# override (see bronze-to-silver_orcestrator.py's
+# bronze_to_silver_window_start_override/_end_override).
+USER_SEARCH_BATCH_SIZE = 50  # not verified against a live instance -- a reasonable default, tune if the real service enforces a different limit
 
 
 def _fetch_users(tenant_id: str, user_id: str) -> list[dict]:
-    """Mirrors UserService.java's getUsers() -- exactly one uuid per call."""
+    """Mirrors UserService.java's getUsers() -- exactly one uuid per call.
+    Only used by the standalone get_user_info lookup; resolve_user_info uses
+    _fetch_users_batch instead."""
+    if not USER_SERVICE_BASE_URL:
+        _warn_url_missing_once("EGOV_USER_SERVICE_BASE_URL", "user-service")
+        return []
     try:
         response = requests.post(
-            f"{_get_base_url(USER_BASE_URL_VARIABLE)}{USER_SEARCH_PATH}",
+            f"{USER_SERVICE_BASE_URL}{USER_SEARCH_PATH}",
             json={"RequestInfo": _build_request_info(), "tenantId": tenant_id, "uuid": [user_id]},
             timeout=30,
         )
@@ -566,6 +617,40 @@ def _fetch_users(tenant_id: str, user_id: str) -> list[dict]:
     except Exception:
         log.exception("user search failed for %s/%s; returning empty result", tenant_id, user_id)
         return []
+
+
+def _fetch_users_batch(tenant_id: str, user_ids: list[str]) -> list[dict] | None:
+    """
+    Batched version of _fetch_users -- the _search API's `uuid` field already
+    accepts a list (the DTO supports it; Java's own usage just never batches
+    it). Returns whatever subset of user_ids the service found (possibly
+    empty/partial -- a normal "not found" outcome for the missing ones, left
+    for the caller to handle silently, same as today). Returns None
+    (distinct from an empty list) only when the call itself failed, so the
+    caller can tell "nobody in this batch exists" apart from "couldn't ask
+    at all" and aggregate just the latter into one summary log instead of
+    logging here per batch.
+
+    Matches each returned user back to its uuid via `user["uuid"]` --
+    verified live against a local user-service: a 3-uuid batch (2 real, 1
+    nonexistent) returned exactly the 2 real users, each tagged with its own
+    "uuid" field matching what was requested; "id" in the same response is a
+    separate internal numeric key (already used as-is for the ID output
+    field below), not the requested identifier.
+    """
+    if not USER_SERVICE_BASE_URL:
+        _warn_url_missing_once("EGOV_USER_SERVICE_BASE_URL", "user-service")
+        return None
+    try:
+        response = requests.post(
+            f"{USER_SERVICE_BASE_URL}{USER_SEARCH_PATH}",
+            json={"RequestInfo": _build_request_info(), "tenantId": tenant_id, "uuid": user_ids},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("user", [])
+    except Exception:
+        return None
 
 
 def _fetch_project_staff_role_ranks(tenant_id: str) -> dict[str, int]:
@@ -585,9 +670,13 @@ def _fetch_project_staff_role_ranks(tenant_id: str) -> dict[str, int]:
     if root_tenant_id in _project_staff_role_rank_cache:
         return _project_staff_role_rank_cache[root_tenant_id]
 
+    if not MDMS_SERVICE_BASE_URL:
+        _warn_url_missing_once("EGOV_MDMS_SERVICE_BASE_URL", "MDMS")
+        return {}
+
     try:
         response = requests.post(
-            f"{_get_base_url(MDMS_BASE_URL_VARIABLE)}{MDMS_SEARCH_PATH}",
+            f"{MDMS_SERVICE_BASE_URL}{MDMS_SEARCH_PATH}",
             json={
                 "RequestInfo": _build_request_info(),
                 "MdmsCriteria": {
@@ -634,13 +723,32 @@ def _get_staff_role(tenant_id: str, users: list[dict]) -> str | None:
     return min(ranked)[1] if ranked else None
 
 
+def _not_found_user_info(user_id: str) -> dict:
+    """Shared not-found shape for get_user_info and resolve_user_info --
+    NOT cached by either caller, matching Java: a user could plausibly land
+    in the service between now and the next lookup."""
+    return {"USERNAME": user_id, "NAME": None, "ROLE": None, "ID": None, "CITY": None}
+
+
+def _build_user_info(tenant_id: str, user: dict) -> dict:
+    """Shared {USERNAME, NAME, ROLE, ID, CITY} shape for get_user_info and
+    resolve_user_info, built from one already-fetched user object."""
+    return {
+        "USERNAME": user.get("userName"),
+        "NAME": user.get("name"),
+        "ROLE": _get_staff_role(tenant_id, [user]),
+        "ID": user.get("id"),
+        "CITY": user.get("correspondenceAddress"),
+    }
+
+
 def get_user_info(tenant_id: str, user_id: str) -> dict:
     """
     Mirrors UserService.java's getUserInfo(): cached wrapper around
-    _fetch_users returning {USERNAME, NAME, ROLE, ID, CITY}. Not-found
-    fallback ({USERNAME: user_id, others None}) is NOT cached, matching
-    Java -- a user could plausibly land in the service between now and the
-    next lookup, so only successful resolutions are cached.
+    _fetch_users returning {USERNAME, NAME, ROLE, ID, CITY}. Standalone
+    single-uuid lookup -- resolve_user_info (the bulk per-chunk path every
+    entity DAG actually uses) calls _fetch_users_batch directly instead of
+    this, so it can batch multiple users into one call.
     """
     cache_key = (tenant_id, user_id)
     if cache_key in _user_info_cache:
@@ -648,16 +756,9 @@ def get_user_info(tenant_id: str, user_id: str) -> dict:
 
     users = _fetch_users(tenant_id, user_id)
     if not users:
-        return {"USERNAME": user_id, "NAME": None, "ROLE": None, "ID": None, "CITY": None}
+        return _not_found_user_info(user_id)
 
-    user = users[0]
-    info = {
-        "USERNAME": user.get("userName"),
-        "NAME": user.get("name"),
-        "ROLE": _get_staff_role(tenant_id, users),
-        "ID": user.get("id"),
-        "CITY": user.get("correspondenceAddress"),
-    }
+    info = _build_user_info(tenant_id, users[0])
     _user_info_cache[cache_key] = info
     return info
 
@@ -684,9 +785,62 @@ def extract_user_lookup_keys(rows: list[dict], get_key) -> set[tuple[str, str]]:
 
 
 def resolve_user_info(lookup_keys: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
-    """Calls get_user_info once per unique (tenant_id, user_id) key (cheap
-    beyond the first call per process thanks to _user_info_cache)."""
-    return {key: get_user_info(*key) for key in lookup_keys}
+    """
+    Resolves every (tenant_id, user_id) key, serving already-cached ones
+    straight from _user_info_cache and batching the rest into groups of
+    USER_SEARCH_BATCH_SIZE per tenant via _fetch_users_batch, instead of one
+    HTTP call per user. If a batch call fails outright, every key in that
+    batch gets the not-found fallback (same shape as a genuine "not found",
+    uncached) and is added to one aggregated warning logged once at the end
+    -- not one log line per failed user. A user genuinely absent from a
+    successful batch response is left out of that warning entirely; that's
+    an expected outcome, not a failure, same as it's always been.
+    """
+    resolved: dict[tuple[str, str], dict] = {}
+    by_tenant: dict[str, list[str]] = {}
+    for tenant_id, user_id in lookup_keys:
+        cache_key = (tenant_id, user_id)
+        if cache_key in _user_info_cache:
+            resolved[cache_key] = _user_info_cache[cache_key]
+        else:
+            by_tenant.setdefault(tenant_id, []).append(user_id)
+
+    failed_keys: list[tuple[str, str]] = []
+    failed_batch_count = 0
+
+    for tenant_id, user_ids in by_tenant.items():
+        for i in range(0, len(user_ids), USER_SEARCH_BATCH_SIZE):
+            batch = user_ids[i:i + USER_SEARCH_BATCH_SIZE]
+            users = _fetch_users_batch(tenant_id, batch)
+
+            if users is None:
+                failed_batch_count += 1
+                failed_keys.extend((tenant_id, uid) for uid in batch)
+                for uid in batch:
+                    resolved[(tenant_id, uid)] = _not_found_user_info(uid)
+                continue
+
+            users_by_uuid = {u["uuid"]: u for u in users if u.get("uuid")}
+            for uid in batch:
+                cache_key = (tenant_id, uid)
+                user = users_by_uuid.get(uid)
+                if user is None:
+                    resolved[cache_key] = _not_found_user_info(uid)
+                    continue
+                info = _build_user_info(tenant_id, user)
+                _user_info_cache[cache_key] = info
+                resolved[cache_key] = info
+
+    if failed_keys:
+        shown = failed_keys[:50]
+        suffix = f" ...and {len(failed_keys) - 50} more" if len(failed_keys) > 50 else ""
+        log.warning(
+            "user-service lookup failed for %d (tenant_id, user_id) pairs across %d batch call(s); "
+            "each falls back to a uuid-only result for this run: %s%s",
+            len(failed_keys), failed_batch_count, shown, suffix,
+        )
+
+    return resolved
 
 
 # --- Workflow summary --------------------------------------------------------
@@ -702,9 +856,12 @@ def resolve_user_info(lookup_keys: set[tuple[str, str]]) -> dict[tuple[str, str]
 
 def _fetch_process_instances(tenant_id: str, business_id: str) -> list[dict]:
     """Mirrors BillService.java's searchProcessInstances(businessId, tenantId, history=true)."""
+    if not WORKFLOW_SERVICE_BASE_URL:
+        _warn_url_missing_once("EGOV_WORKFLOW_SERVICE_BASE_URL", "workflow-service")
+        return []
     try:
         response = requests.post(
-            f"{_get_base_url(WORKFLOW_BASE_URL_VARIABLE)}{WORKFLOW_PROCESS_SEARCH_PATH}",
+            f"{WORKFLOW_SERVICE_BASE_URL}{WORKFLOW_PROCESS_SEARCH_PATH}",
             params={"tenantId": tenant_id, "businessIds": business_id, "history": "true"},
             json={"RequestInfo": _build_request_info()},
             timeout=30,

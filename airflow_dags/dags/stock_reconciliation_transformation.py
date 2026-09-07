@@ -82,27 +82,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -114,7 +131,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -123,15 +140,41 @@ def _fetch_enriched_stock_reconciliation_rows(client, stock_reconciliation_ids: 
     """
     stg_stock_reconciliation has a single, direct facility_id (no
     sender/receiver split, no STAFF concept -- confirmed from the current
-    Java model, which is single-facility unlike Stock). sr.* is safe (no
-    collision with aliased join columns). No fan-out guard needed --
+    Java model, which is single-facility unlike Stock). sr's own columns
+    are individually aliased rather than `sr.*` -- with 4 joined tables,
+    ClickHouse silently qualifies any sr column whose bare name collides
+    with a column in fac/addr/pv/p/paddr as `sr.<col>` in the result set,
+    breaking downstream lookups expecting bare names. FINAL is used on
+    every joined table to avoid row versions from un-merged
+    ReplacingMergeTree duplicates; no fan-out guard needed beyond that --
     every join is by primary key, or the same single-address-per-
     facility/project assumption already used elsewhere.
     """
     result = client.query(
         f"""
         SELECT
-            sr.*,
+            sr.id                          AS id,
+            sr.client_reference_id         AS client_reference_id,
+            sr.tenant_id                   AS tenant_id,
+            sr.facility_id                 AS facility_id,
+            sr.product_variant_id          AS product_variant_id,
+            sr.reference_id                AS reference_id,
+            sr.reference_id_type           AS reference_id_type,
+            sr.date_of_reconciliation      AS date_of_reconciliation,
+            sr.calculated_count            AS calculated_count,
+            sr.physical_recorded_count     AS physical_recorded_count,
+            sr.comments_on_reconciliation  AS comments_on_reconciliation,
+            sr.additional_details          AS additional_details,
+            sr.created_by                  AS created_by,
+            sr.created_time                AS created_time,
+            sr.last_modified_by            AS last_modified_by,
+            sr.last_modified_time          AS last_modified_time,
+            sr.client_created_time         AS client_created_time,
+            sr.client_last_modified_time   AS client_last_modified_time,
+            sr.client_created_by           AS client_created_by,
+            sr.client_last_modified_by     AS client_last_modified_by,
+            sr.row_version                 AS row_version,
+            sr.is_deleted                  AS is_deleted,
             fac.name                   AS facility_name_raw,
             fac.usage                  AS facility_usage,
             fac.is_permanent           AS facility_is_permanent,
@@ -145,15 +188,15 @@ def _fetch_enriched_stock_reconciliation_rows(client, stock_reconciliation_ids: 
             p.additional_details       AS project_additional_details,
             paddr.boundary              AS project_boundary_code
         FROM {BRONZE_TABLE} AS sr
-        LEFT JOIN {FACILITY_TABLE} AS fac
+        LEFT JOIN {FACILITY_TABLE} AS fac FINAL
             ON fac.id = sr.facility_id AND fac.tenant_id = sr.tenant_id AND fac.is_deleted = false
-        LEFT JOIN {ADDRESS_TABLE} AS addr
+        LEFT JOIN {ADDRESS_TABLE} AS addr FINAL
             ON addr.id = fac.address_id AND addr.tenant_id = fac.tenant_id
-        LEFT JOIN {PRODUCT_VARIANT_TABLE} AS pv
+        LEFT JOIN {PRODUCT_VARIANT_TABLE} AS pv FINAL
             ON pv.id = sr.product_variant_id AND pv.tenant_id = sr.tenant_id
-        LEFT JOIN {PROJECT_TABLE} AS p
+        LEFT JOIN {PROJECT_TABLE} AS p FINAL
             ON p.id = sr.reference_id AND p.tenant_id = sr.tenant_id
-        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr
+        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr FINAL
             ON paddr.project_id = p.id AND paddr.tenant_id = p.tenant_id
         WHERE sr.id IN %(stock_reconciliation_ids)s
         """,

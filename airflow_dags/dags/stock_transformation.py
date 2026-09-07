@@ -82,27 +82,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -114,7 +131,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -137,11 +154,49 @@ def _fetch_enriched_stock_rows(client, stock_ids: list[str]) -> list[dict]:
     for the facility side (boundary is never resolved from the transacting
     party's address). No fan-out risk -- every join is by primary key or a
     single-address-per-facility/project assumption already used elsewhere.
+
+    st's own columns are individually aliased rather than `st.*` -- with 5
+    joined tables, ClickHouse silently qualifies any st column whose bare
+    name collides with a column in fac/addr/tfac/pv/p/paddr as `st.<col>`
+    in the result set, breaking downstream lookups expecting bare names.
+    The CASE WHEN derived columns still reference `st.<col>` directly (the
+    source alias in FROM, not the wildcard expansion), so they're
+    unaffected and left as-is. FINAL is used on every joined table to
+    avoid row versions from un-merged ReplacingMergeTree duplicates.
     """
     result = client.query(
         f"""
         SELECT
-            st.*,
+            st.id                         AS id,
+            st.client_reference_id        AS client_reference_id,
+            st.tenant_id                  AS tenant_id,
+            st.facility_id                AS facility_id,
+            st.product_variant_id         AS product_variant_id,
+            st.quantity                   AS quantity,
+            st.waybill_number             AS waybill_number,
+            st.date_of_entry              AS date_of_entry,
+            st.campaign_number            AS campaign_number,
+            st.reference_id               AS reference_id,
+            st.reference_id_type          AS reference_id_type,
+            st.transaction_type           AS transaction_type,
+            st.transaction_reason         AS transaction_reason,
+            st.transacting_party_id       AS transacting_party_id,
+            st.transacting_party_type     AS transacting_party_type,
+            st.sender_type                AS sender_type,
+            st.sender_id                  AS sender_id,
+            st.receiver_type              AS receiver_type,
+            st.receiver_id                AS receiver_id,
+            st.additional_details         AS additional_details,
+            st.created_by                 AS created_by,
+            st.created_time               AS created_time,
+            st.last_modified_by           AS last_modified_by,
+            st.last_modified_time         AS last_modified_time,
+            st.client_created_time        AS client_created_time,
+            st.client_last_modified_time  AS client_last_modified_time,
+            st.client_created_by          AS client_created_by,
+            st.client_last_modified_by    AS client_last_modified_by,
+            st.row_version                AS row_version,
+            st.is_deleted                 AS is_deleted,
             CASE WHEN lower(st.transaction_type) = 'received' THEN st.receiver_id   ELSE st.sender_id   END AS facility_id_derived,
             CASE WHEN lower(st.transaction_type) = 'received' THEN st.receiver_type ELSE st.sender_type END AS facility_type_derived,
             CASE WHEN lower(st.transaction_type) = 'received' THEN st.sender_id     ELSE st.receiver_id   END AS transacting_facility_id_derived,
@@ -162,19 +217,19 @@ def _fetch_enriched_stock_rows(client, stock_ids: list[str]) -> list[dict]:
             p.additional_details       AS project_additional_details,
             paddr.boundary              AS project_boundary_code
         FROM {BRONZE_TABLE} AS st
-        LEFT JOIN {FACILITY_TABLE} AS fac
+        LEFT JOIN {FACILITY_TABLE} AS fac FINAL
             ON fac.id = (CASE WHEN lower(st.transaction_type) = 'received' THEN st.receiver_id ELSE st.sender_id END)
             AND fac.tenant_id = st.tenant_id AND fac.is_deleted = false
-        LEFT JOIN {ADDRESS_TABLE} AS addr
+        LEFT JOIN {ADDRESS_TABLE} AS addr FINAL
             ON addr.id = fac.address_id AND addr.tenant_id = fac.tenant_id
-        LEFT JOIN {FACILITY_TABLE} AS tfac
+        LEFT JOIN {FACILITY_TABLE} AS tfac FINAL
             ON tfac.id = (CASE WHEN lower(st.transaction_type) = 'received' THEN st.sender_id ELSE st.receiver_id END)
             AND tfac.tenant_id = st.tenant_id AND tfac.is_deleted = false
-        LEFT JOIN {PRODUCT_VARIANT_TABLE} AS pv
+        LEFT JOIN {PRODUCT_VARIANT_TABLE} AS pv FINAL
             ON pv.id = st.product_variant_id AND pv.tenant_id = st.tenant_id
-        LEFT JOIN {PROJECT_TABLE} AS p
+        LEFT JOIN {PROJECT_TABLE} AS p FINAL
             ON p.id = st.reference_id AND p.tenant_id = st.tenant_id
-        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr
+        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr FINAL
             ON paddr.project_id = p.id AND paddr.tenant_id = p.tenant_id
         WHERE st.id IN %(stock_ids)s
         """,

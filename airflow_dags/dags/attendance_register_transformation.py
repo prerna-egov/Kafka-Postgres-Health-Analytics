@@ -75,27 +75,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -107,7 +124,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -116,22 +133,45 @@ def _fetch_enriched_register_rows(client, register_ids: list[str]) -> list[dict]
     """
     reg.reference_id is assumed to be a project id (the only path Java's
     own model supports) -- joins straight through to stg_project and its
-    address, same shape as every other project-linked entity. reg.* is
-    safe (no collision with the joined columns' aliases).
+    address, same shape as every other project-linked entity. reg's own
+    columns are individually aliased rather than `reg.*` -- with 2+ joined
+    tables, ClickHouse silently qualifies any reg column whose bare name
+    collides with a column in p/paddr as `reg.<col>` in the result set,
+    breaking downstream lookups expecting bare names. FINAL is used on
+    both joined tables to avoid row fan-out from un-merged
+    ReplacingMergeTree duplicates.
     """
     result = client.query(
         f"""
         SELECT
-            reg.*,
+            reg.id                  AS id,
+            reg.tenant_id            AS tenant_id,
+            reg.register_number      AS register_number,
+            reg.name                 AS name,
+            reg.start_date           AS start_date,
+            reg.end_date             AS end_date,
+            reg.status               AS status,
+            reg.additional_details   AS additional_details,
+            reg.created_by           AS created_by,
+            reg.last_modified_by     AS last_modified_by,
+            reg.created_time         AS created_time,
+            reg.last_modified_time   AS last_modified_time,
+            reg.reference_id         AS reference_id,
+            reg.service_code         AS service_code,
+            reg.locality_code        AS locality_code,
+            reg.review_status        AS review_status,
+            reg.period_statuses      AS period_statuses,
+            reg.campaign_number      AS campaign_number,
+            reg.is_deleted           AS is_deleted,
             p.project_type       AS project_type,
             p.project_type_id    AS project_type_id,
             p.name               AS project_name,
             p.additional_details AS project_additional_details,
             paddr.boundary        AS project_boundary_code
         FROM {BRONZE_TABLE} AS reg
-        LEFT JOIN {PROJECT_TABLE} AS p
+        LEFT JOIN {PROJECT_TABLE} AS p FINAL
             ON p.id = reg.reference_id AND p.tenant_id = reg.tenant_id
-        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr
+        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr FINAL
             ON paddr.project_id = p.id AND paddr.tenant_id = p.tenant_id
         WHERE reg.id IN %(register_ids)s
         """,

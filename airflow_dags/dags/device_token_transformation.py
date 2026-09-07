@@ -1,17 +1,19 @@
 """
-attendee_transformation.py
+device_token_transformation.py
 
-Bronze -> silver transformation DAG for the `attendee` entity
-(IndividualEntry -> AttendeeIndexV1 in the Java reference). Triggered
+Bronze -> silver transformation DAG for the `device_token` entity
+(DeviceToken -> DeviceTokenIndexV1 in the Java reference). Triggered
 exclusively by bronze_to_silver_orchestrator with
 conf={"start_time": ..., "end_time": ...}; not scheduled on its own.
 
-Java's AttendeeTransformationService also triggers the attendance-register
-rollup (attendeesInfo/staffsInfo/counts) as a side effect of transforming a
-batch of attendees -- that rollup is already built independently by
-attendance_register_transformation.py, so it is deliberately NOT rebuilt
-here (same reasoning as attendance_staff_transformation.py: independent
-windowed-batch DAGs, not Java's trigger-cascade).
+Java resolves project/campaign context and the boundary source off
+deviceToken.getUserId() via a userId -> ProjectStaff -> Project bridge (the
+same bridge pattern pgr_transformation.py builds off last_modified_by), then
+only fetches the boundary hierarchy if that bridge found a project -- both
+lookups here key off device_token's own user_id (unlike PGR, there's no
+separate "display user" vs "staff bridge user" split on this entity).
+campaign_id stays "" with the same TODO every other entity carries -- no
+project-factory/campaign-search integration exists in this repo yet.
 """
 from __future__ import annotations
 
@@ -33,7 +35,6 @@ from egov_api_utils import (  # noqa: E402
     attach_boundary_levels,
     extract_boundary_lookup_keys,
     extract_user_lookup_keys,
-    parse_boundary_code,
     parse_hierarchy_type,
     resolve_boundary_levels,
     resolve_user_info,
@@ -41,25 +42,25 @@ from egov_api_utils import (  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-DAG_ID = "attendee_transformation"
+DAG_ID = "device_token_transformation"
 
-BRONZE_TABLE = "analytics.stg_attendance_attendee"
-INDIVIDUAL_TABLE = "analytics.stg_individual"
-REGISTER_TABLE = "analytics.stg_attendance_register"
+BRONZE_TABLE = "analytics.stg_device_tokens"
 PROJECT_STAFF_TABLE = "analytics.stg_project_staff"
 PROJECT_TABLE = "analytics.stg_project"
 PROJECT_ADDRESS_TABLE = "analytics.stg_project_address"
 CHUNK_SIZE_VARIABLE = "bronze_to_silver_chunk_size"
 DEFAULT_CHUNK_SIZE = 5000
 
-SILVER_TABLE = "attendee_entity"
+SILVER_TABLE = "device_token_entity"
+
+_EPOCH_DATE = pendulum.Date(1970, 1, 1)
 
 SILVER_COLUMNS = [
-    "id", "tenant_id", "register_id", "individual_id", "enrollment_date", "denrollment_date",
-    "created_by", "last_modified_by", "created_time", "last_modified_time", "additional_details",
-    "user_name", "name_of_user", "role", "register_service_code", "register_name", "register_number",
+    "id", "user_id", "device_type", "tenant_id", "created_by", "last_modified_by",
+    "created_time", "last_modified_time", "facility_id", "user_roles", "user_name", "role",
     "level_one_code", "level_two_code", "level_three_code", "level_four_code", "level_five_code",
     "level_six_code", "level_seven_code", "level_eight_code", "level_nine_code", "hierarchy_type",
+    "task_dates", "synced_date",
     "project_id", "project_type", "project_type_id", "project_name", "campaign_number", "campaign_id",
 ]
 
@@ -134,71 +135,40 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
             return
 
 
-def _fetch_enriched_attendee_rows(client, attendee_ids: list[str]) -> list[dict]:
-    """
-    Left-joins this chunk's stg_attendance_attendee rows with the individual
-    they belong to (attendee.individual_id is an Individual's own id, not a
-    client_reference_id -- same two-hop convention as
-    attendance_staff_transformation.py) and the register they're enrolled in.
-
-    att's own columns are individually aliased rather than `att.*` -- with
-    2+ joined tables, ClickHouse silently qualifies any att column whose
-    bare name collides with a column in ind/reg (even one never explicitly
-    selected) as `att.<col>` in the result set, breaking downstream lookups
-    expecting bare names like `tenant_id`. FINAL is used on both joined
-    tables to avoid row versions from un-merged ReplacingMergeTree
-    duplicates; no fan-out guard needed beyond that -- both joins are by
-    primary key.
-    """
+def _fetch_device_token_rows(client, device_token_ids: list[str]) -> list[dict]:
+    """Bronze is a single flat table for this entity -- no per-row join
+    needed at fetch time (unlike pgr's address sub-table)."""
     result = client.query(
-        f"""
-        SELECT
-            att.id                 AS id,
-            att.individual_id      AS individual_id,
-            att.register_id        AS register_id,
-            att.enrollment_date    AS enrollment_date,
-            att.deenrollment_date  AS deenrollment_date,
-            att.additional_details AS additional_details,
-            att.created_by         AS created_by,
-            att.last_modified_by   AS last_modified_by,
-            att.created_time       AS created_time,
-            att.last_modified_time AS last_modified_time,
-            att.tenant_id          AS tenant_id,
-            att.tag                AS tag,
-            ind.user_uuid       AS resolved_user_uuid,
-            reg.name            AS register_name_raw,
-            reg.service_code    AS register_service_code_raw,
-            reg.register_number AS register_number_raw
-        FROM {BRONZE_TABLE} AS att
-        LEFT JOIN {INDIVIDUAL_TABLE} AS ind FINAL
-            ON ind.id = att.individual_id AND ind.tenant_id = att.tenant_id AND ind.is_deleted = false
-        LEFT JOIN {REGISTER_TABLE} AS reg FINAL
-            ON reg.id = att.register_id AND reg.tenant_id = att.tenant_id
-        WHERE att.id IN %(attendee_ids)s
-        """,
-        parameters={"attendee_ids": attendee_ids},
+        f"SELECT * FROM {BRONZE_TABLE} WHERE id IN %(device_token_ids)s",
+        parameters={"device_token_ids": device_token_ids},
     )
     return list(result.named_results())
 
 
-def _extract_staff_lookup_keys(joined_rows: list[dict]) -> dict[str, set[str]]:
+def _extract_staff_lookup_keys(rows: list[dict]) -> dict[str, set[str]]:
+    """Keyed on device_token's own user_id -- Java calls
+    projectService.searchProjectStaff([deviceToken.getUserId()]) directly,
+    with no separate created_by/last_modified_by split like PGR has."""
     lookup_keys: dict[str, set[str]] = {}
-    for row in joined_rows:
-        user_uuid = row.get("resolved_user_uuid")
-        if user_uuid:
-            lookup_keys.setdefault(row["tenant_id"], set()).add(user_uuid)
+    for row in rows:
+        user_id = row.get("user_id")
+        if user_id:
+            lookup_keys.setdefault(row["tenant_id"], set()).add(user_id)
     return lookup_keys
 
 
-def _resolve_user_project_context(client, lookup_keys: dict[str, set[str]]) -> dict[tuple[str, str], dict]:
+def _resolve_user_project_boundary(client, lookup_keys: dict[str, set[str]]) -> dict[tuple[str, str], dict]:
     """
-    LEFT JOIN stg_project_staff -> stg_project -> stg_project_address,
-    LIMIT 1 BY staff_id -- same tie-break already established for
-    household/household_member/stock/pgr/attendance_staff (confirmed
-    against the live project-service source: GenericRepository's default
-    ORDER BY id ASC). Used for BOTH the boundary fallback and the
-    project/campaign trailer here -- attendee uses the same key
-    (resolved_user_uuid) for both, unlike attendance_log.
+    One query per tenant (zero if empty): LEFT JOINs stg_project_staff ->
+    stg_project -> stg_project_address and uses ClickHouse's `LIMIT 1 BY` to
+    pick each user's lowest-id non-deleted stg_project_staff row -- the same
+    entity-agnostic bridge pgr_transformation.py builds off last_modified_by
+    (mirrors ProjectStaffRepository's real ORDER BY id ASC), extended with
+    the project_address join in the same round trip so the resolved
+    project's own boundary source (address_boundary + additional_details for
+    hierarchy_type) comes back alongside project/campaign context -- a
+    single 3-hop bridge stage rather than folding the join into the main
+    per-chunk device_token fetch.
     """
     resolved: dict[tuple[str, str], dict] = {}
     for tenant_id, user_ids in lookup_keys.items():
@@ -212,7 +182,7 @@ def _resolve_user_project_context(client, lookup_keys: dict[str, set[str]]) -> d
                 p.name                AS project_name,
                 p.reference_id        AS campaign_number,
                 p.additional_details  AS project_additional_details,
-                paddr.boundary        AS project_boundary_code
+                paddr.boundary        AS address_boundary
             FROM {PROJECT_STAFF_TABLE} AS ps
             LEFT JOIN {PROJECT_TABLE} AS p
                 ON p.id = ps.project_id AND p.tenant_id = ps.tenant_id
@@ -232,49 +202,56 @@ def _resolve_user_project_context(client, lookup_keys: dict[str, set[str]]) -> d
                 "project_name": r["project_name"] or "",
                 "campaign_number": r["campaign_number"] or "",
                 "project_additional_details": r["project_additional_details"],
-                "project_boundary_code": r["project_boundary_code"],
+                "address_boundary": r["address_boundary"],
             }
     return resolved
 
 
-def _attach_project_context(joined_rows: list[dict], user_project_context: dict) -> None:
-    for row in joined_rows:
+def _attach_project_boundary_context(rows: list[dict], user_project_boundary: dict) -> None:
+    """Rows with no ProjectStaff/Project match get empty project/campaign
+    context and no boundary source -- the direct equivalent of Java's
+    "no ProjectStaff found -> empty ProjectInfo, no boundary fetch" branch;
+    _get_boundary_lookup_key below short-circuits to None in that case."""
+    for row in rows:
         row["project_id"] = ""
         row["project_type"] = ""
         row["project_type_id"] = ""
         row["project_name"] = ""
         row["campaign_number"] = ""
         row["project_additional_details"] = None
-        row["project_boundary_code"] = None
-        details = user_project_context.get((row["tenant_id"], row.get("resolved_user_uuid")))
+        row["address_boundary"] = None
+        details = user_project_boundary.get((row["tenant_id"], row.get("user_id")))
         if details:
-            row.update(details)
+            row["project_id"] = details["project_id"]
+            row["project_type"] = details["project_type"]
+            row["project_type_id"] = details["project_type_id"]
+            row["project_name"] = details["project_name"]
+            row["campaign_number"] = details["campaign_number"]
+            row["project_additional_details"] = details["project_additional_details"]
+            row["address_boundary"] = details["address_boundary"]
 
 
 def _get_boundary_lookup_key(row: dict) -> tuple[str, str, str] | None:
-    """
-    hierarchy_type always comes from the project-staff bridge's resolved
-    project_additional_details (this repo's established per-project
-    convention). The CODE prefers the attendee's own additional_details
-    boundaryCode (mirrors Java's locality-code-first check exactly); falls
-    back to the bridge's project_boundary_code when the attendee's own
-    additionalDetails has no boundaryCode -- mirroring Java's fallback to
-    boundaryService.getBoundaryHierarchyWithProjectId.
-    """
+    """Mirrors project_transformation.py's own boundary key: hierarchy_type
+    comes from the resolved project's additional_details, boundary code from
+    that project's own address -- both only present if the staff bridge
+    found a project for this user."""
     hierarchy_type = parse_hierarchy_type(row.get("project_additional_details"))
     if not hierarchy_type:
         return None
-    code = parse_boundary_code(row.get("additional_details")) or row.get("project_boundary_code")
+    code = row.get("address_boundary")
     if not code:
         return None
     return row["tenant_id"], hierarchy_type, code
 
 
 def _get_user_lookup_key(row: dict) -> tuple[str, str] | None:
-    user_uuid = row.get("resolved_user_uuid")
-    if not user_uuid:
+    """Same user_id as the staff bridge -- Java's userService.getUserInfo
+    also keys off deviceToken.getUserId()."""
+    user_id = row.get("user_id")
+    if not user_id:
         return None
-    return row["tenant_id"], user_uuid
+    return row["tenant_id"], user_id
 
 
 def _default_str(value) -> str:
@@ -285,35 +262,32 @@ def _default_int(value) -> int:
     return 0 if value is None else int(round(value))
 
 
+def _default_date(epoch_ms):
+    return pendulum.from_timestamp(epoch_ms / 1000, tz="UTC").date() if epoch_ms else _EPOCH_DATE
+
+
 def _build_silver_row(row: dict) -> dict:
     """
-    Maps one fully-enriched joined row onto attendee_entity's exact column
-    set. Unlike attendance_staff_entity, this table has an individual_id
-    column directly -- bronze's own column name maps straight across, no
-    rename needed. additional_details is passed through as-is (also the
-    source for _get_boundary_lookup_key's locality-code parse) -- Java
-    builds no derived blob for attendees either. register_service_code/
-    register_name/register_number fall back to "" if the register join
-    missed, matching Java's null-guarded builder fields.
+    Maps one fully-enriched row onto device_token_entity's exact column set.
+    task_dates and synced_date both derive from last_modified_time -- Java
+    computes both from the same auditDetails.getLastModifiedTime(), and
+    DeviceToken has no separate client-audit trail. user_roles stays a
+    single comma-separated string on both sides, matching Java's
+    DeviceToken.userRoles (no explosion into rows/array).
     """
     return {
         "id": row["id"],
+        "user_id": _default_str(row.get("user_id")),
+        "device_type": _default_str(row.get("device_type")),
         "tenant_id": _default_str(row.get("tenant_id")),
-        "register_id": _default_str(row.get("register_id")),
-        "individual_id": _default_str(row.get("individual_id")),
-        "enrollment_date": _default_int(row.get("enrollment_date")),
-        "denrollment_date": _default_int(row.get("deenrollment_date")),
         "created_by": _default_str(row.get("created_by")),
         "last_modified_by": _default_str(row.get("last_modified_by")),
         "created_time": _default_int(row.get("created_time")),
         "last_modified_time": _default_int(row.get("last_modified_time")),
-        "additional_details": _default_str(row.get("additional_details")),
+        "facility_id": _default_str(row.get("facility_id")),
+        "user_roles": _default_str(row.get("user_roles")),
         "user_name": _default_str(row.get("user_name")),
-        "name_of_user": _default_str(row.get("name_of_user")),
         "role": _default_str(row.get("role")),
-        "register_service_code": _default_str(row.get("register_service_code_raw")),
-        "register_name": _default_str(row.get("register_name_raw")),
-        "register_number": _default_str(row.get("register_number_raw")),
         "level_one_code": _default_str(row.get("level_one_code")),
         "level_two_code": _default_str(row.get("level_two_code")),
         "level_three_code": _default_str(row.get("level_three_code")),
@@ -324,6 +298,8 @@ def _build_silver_row(row: dict) -> dict:
         "level_eight_code": _default_str(row.get("level_eight_code")),
         "level_nine_code": _default_str(row.get("level_nine_code")),
         "hierarchy_type": _default_str(row.get("hierarchy_type")),
+        "task_dates": _default_date(row.get("last_modified_time")),
+        "synced_date": _default_date(row.get("last_modified_time")),
         "project_id": _default_str(row.get("project_id")),
         "project_type": _default_str(row.get("project_type")),
         "project_type_id": _default_str(row.get("project_type_id")),
@@ -333,16 +309,16 @@ def _build_silver_row(row: dict) -> dict:
     }
 
 
-def _build_silver_rows(joined_rows: list[dict]) -> list[dict]:
+def _build_silver_rows(rows: list[dict]) -> list[dict]:
     """Builds each row independently; a malformed row is logged and
     skipped rather than failing the whole chunk's write."""
     silver_rows = []
-    for row in joined_rows:
+    for row in rows:
         try:
             silver_rows.append(_build_silver_row(row))
         except Exception:
             log.exception(
-                "attendee: failed to build silver row for attendee id=%s; skipping this row",
+                "device_token: failed to build silver row for device_token id=%s; skipping this row",
                 row.get("id"),
             )
     return silver_rows
@@ -357,14 +333,14 @@ def _write_silver_chunk(client, silver_rows: list[dict]) -> None:
 
 @dag(
     dag_id=DAG_ID,
-    description="Transforms attendee bronze events into the attendee_entity silver table.",
+    description="Transforms device_token bronze events into the device_token_entity silver table.",
     schedule=None,
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
     max_active_runs=1,
-    tags=["bronze-to-silver", "attendee"],
+    tags=["bronze-to-silver", "device_token"],
 )
-def attendee_transformation():
+def device_token_transformation():
 
     @task
     def parse_time_window(**context) -> dict:
@@ -390,9 +366,9 @@ def attendee_transformation():
     @task
     def transform_bronze_to_silver(time_window: dict) -> None:
         """
-        Reads attendee bronze rows for this run's window in fixed-size
+        Reads device_token bronze rows for this run's window in fixed-size
         chunks via keyset pagination, transforms, and writes each chunk to
-        attendee_entity before moving to the next chunk.
+        device_token_entity before moving to the next chunk.
 
         Filtered on _ingested_at (bronze arrival time), not
         last_modified_time (source modification time) -- see
@@ -407,7 +383,7 @@ def attendee_transformation():
 
         total = _count_bronze_records(client, start_dt, end_dt)
         log.info(
-            "attendee bronze records ingested in [%s, %s): %d (chunk_size=%d)",
+            "device_token bronze records ingested in [%s, %s): %d (chunk_size=%d)",
             time_window["start_time"], time_window["end_time"], total, chunk_size,
         )
         if total == 0:
@@ -419,54 +395,49 @@ def attendee_transformation():
             chunk_num += 1
             rows_seen += len(chunk)
             log.info(
-                "attendee chunk %d: %d attendee rows (cumulative %d/%d)",
+                "device_token chunk %d: %d device_token rows (cumulative %d/%d)",
                 chunk_num, len(chunk), rows_seen, total,
             )
 
-            attendee_ids = [row["id"] for row in chunk]
-            joined_rows = _fetch_enriched_attendee_rows(client, attendee_ids)
-            log.info(
-                "attendee chunk %d: %d rows after LEFT JOIN with individual/register",
-                chunk_num, len(joined_rows),
-            )
+            device_token_ids = [row["id"] for row in chunk]
+            rows = _fetch_device_token_rows(client, device_token_ids)
 
-            staff_lookup_keys = _extract_staff_lookup_keys(joined_rows)
+            staff_lookup_keys = _extract_staff_lookup_keys(rows)
             unique_staff_count = sum(len(user_ids) for user_ids in staff_lookup_keys.values())
-            user_project_context = _resolve_user_project_context(client, staff_lookup_keys)
-            _attach_project_context(joined_rows, user_project_context)
+            user_project_boundary = _resolve_user_project_boundary(client, staff_lookup_keys)
+            _attach_project_boundary_context(rows, user_project_boundary)
             log.info(
-                "attendee chunk %d: resolved project-staff bridge for %d/%d unique user(s)",
-                chunk_num, len(user_project_context), unique_staff_count,
+                "device_token chunk %d: resolved project-staff bridge for %d/%d unique user(s)",
+                chunk_num, len(user_project_boundary), unique_staff_count,
             )
 
-            lookup_keys = extract_boundary_lookup_keys(joined_rows, _get_boundary_lookup_key)
+            lookup_keys = extract_boundary_lookup_keys(rows, _get_boundary_lookup_key)
             resolved_levels = resolve_boundary_levels(lookup_keys)
-            attach_boundary_levels(joined_rows, resolved_levels, _get_boundary_lookup_key)
+            attach_boundary_levels(rows, resolved_levels, _get_boundary_lookup_key)
             log.info(
-                "attendee chunk %d: attached boundary hierarchy levels to %d rows",
-                chunk_num, len(joined_rows),
+                "device_token chunk %d: attached boundary hierarchy levels to %d rows",
+                chunk_num, len(rows),
             )
 
-            user_lookup_keys = extract_user_lookup_keys(joined_rows, _get_user_lookup_key)
+            user_lookup_keys = extract_user_lookup_keys(rows, _get_user_lookup_key)
             resolved_user_info = resolve_user_info(user_lookup_keys)
-            for row in joined_rows:
+            for row in rows:
                 info = resolved_user_info.get(_get_user_lookup_key(row)) or {}
                 row["user_name"] = info.get("USERNAME") or ""
-                row["name_of_user"] = info.get("NAME") or ""
                 row["role"] = info.get("ROLE") or ""
             log.info(
-                "attendee chunk %d: attached user info to %d rows (%d unique user(s))",
-                chunk_num, len(joined_rows), len(user_lookup_keys),
+                "device_token chunk %d: attached user info to %d rows (%d unique user(s))",
+                chunk_num, len(rows), len(user_lookup_keys),
             )
 
-            silver_rows = _build_silver_rows(joined_rows)
+            silver_rows = _build_silver_rows(rows)
             _write_silver_chunk(client, silver_rows)
             log.info(
-                "attendee chunk %d: wrote %d/%d rows to %s",
-                chunk_num, len(silver_rows), len(joined_rows), SILVER_TABLE,
+                "device_token chunk %d: wrote %d/%d rows to %s",
+                chunk_num, len(silver_rows), len(rows), SILVER_TABLE,
             )
 
     transform_bronze_to_silver(parse_time_window())
 
 
-attendee_transformation()
+device_token_transformation()

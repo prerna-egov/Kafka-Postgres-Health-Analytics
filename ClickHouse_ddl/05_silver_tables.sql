@@ -628,7 +628,7 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
     --TODO: add default values
     age                                     UInt32,
     gender                                  LowCardinality(String),
-    date_of_birth                           Date,
+    date_of_birth                           Date32,
 
     cycleIndex                              UInt8,
     doseIndex                               UInt8,
@@ -1245,4 +1245,51 @@ CREATE TABLE IF NOT EXISTS muster_roll_entity (
 ) 
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id, individual_entry_id)
+SETTINGS index_granularity = 8192;
+
+
+
+CREATE TABLE IF NOT EXISTS device_token_entity (
+
+    _ingested_at                        DateTime64(3) DEFAULT now64(3),
+    id                                  String,
+    user_id                             String,
+    device_type                         LowCardinality(String),
+    tenant_id                           LowCardinality(String),
+    created_by                          String,
+    last_modified_by                    String,
+    created_time                        Int64,
+    last_modified_time                  Int64,
+    facility_id                         String,
+    user_roles                          String,
+    user_name                           LowCardinality(String),
+    role                                LowCardinality(String),
+
+     -- Flattened Boundary Hierarchy Fields
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    hierarchy_type                      LowCardinality(String),
+
+    task_dates                          Date32,
+    synced_date                         Date32,
+
+    -- EXTRA FIELDS USED BY TRANSFORMER
+    project_id                          String,
+    project_type                        LowCardinality(String),
+    project_type_id                     String,
+    project_name                        String,
+    campaign_number                     String,
+    campaign_id                         String
+
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;

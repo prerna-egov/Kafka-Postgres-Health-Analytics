@@ -79,6 +79,14 @@ def _parse_window_bound(iso_ts: str):
     return pendulum.parse(iso_ts)
 
 def _count_bronze_records(client, start_dt, end_dt) -> int:
+    """
+    Deliberately no FINAL here (unlike the enrichment queries below):
+    _ingested_at is not this table's ReplacingMergeTree version column
+    (last_modified_time is), so FINAL could make the row that "wins" a
+    given id's dedup carry a different _ingested_at than the duplicate that
+    actually fell inside [start_dt, end_dt) -- undercounting or pagination
+    drift against _iter_bronze_chunks below, not just a cost tradeoff.
+    """
     result = client.query(
         f"SELECT count() FROM {BRONZE_TABLE} "
         f"WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s",
@@ -90,27 +98,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -122,7 +147,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -136,25 +161,44 @@ def _fetch_enriched_task_rows(client, task_ids: list[str]) -> list[dict]:
     done entirely in ClickHouse to avoid Python-side dict merging. No LIMIT is
     applied on any join -- every resource/address for every task_id passed in
     is returned, so nothing is ever cut off mid-task by a page boundary.
-    stg_task_resource's audit columns (_ingested_at, created_by, created_time,
-    last_modified_by, last_modified_time, is_deleted) are excluded from the
-    SELECT; stg_address has none to exclude.
+    stg_task_resource, stg_address, stg_project, and stg_project_address all
+    share column names with stg_project_task (id, tenant_id, created_by,
+    created_time, last_modified_by, last_modified_time, is_deleted,
+    additional_details, client_reference_id, project_id, depending on the
+    pair) -- `pt.*` would silently collide on all of those (ClickHouse
+    renames pt's copy to "pt.<col>" in the result set whenever a same-named
+    column exists *anywhere* in the joined tables, even if that joined
+    column is never itself selected), so this query explicitly selects and
+    aliases only the stg_project_task columns actually needed, rather than
+    using pt.*. pt.address_id doesn't need to be selected at all -- the addr
+    join condition references it directly, and the resolved address is read
+    downstream via the explicit resolved_address_id/address_* aliases below.
 
-    addr.id is aliased to resolved_address_id rather than address_id, since
-    pt.* already includes a column literally named address_id (the FK
-    pointer) -- reusing that name would silently collide in the result dict.
-    Likewise proj.additional_details is aliased to project_additional_details
-    since pt.* already includes its own additional_details column.
+    addr.id is aliased to resolved_address_id (not address_id) and
+    proj.additional_details is aliased to project_additional_details, both
+    to keep them distinct from stg_project_task's own address_id/
+    additional_details.
     """
 
-    #TODO: Add FINAL in all the select queries since we are using replacing merge tree in clickhouse
     '''TODO: Modify the query so that the bigger tables are on the left side of the query because in clickhouse
-    the right table should always be smaller 
+    the right table should always be smaller
     '''
     result = client.query(
         f"""
         SELECT
-            pt.*,
+            pt.id                                       AS id,
+            pt.tenant_id                                AS tenant_id,
+            pt.project_id                               AS project_id,
+            pt.project_beneficiary_client_reference_id  AS project_beneficiary_client_reference_id,
+            pt.additional_details                       AS additional_details,
+            pt.created_time                             AS created_time,
+            pt.last_modified_time                       AS last_modified_time,
+            pt.client_created_time                      AS client_created_time,
+            pt.client_last_modified_time                AS client_last_modified_time,
+            pt.client_created_by                        AS client_created_by,
+            pt.client_last_modified_by                  AS client_last_modified_by,
+            pt.client_reference_id                      AS client_reference_id,
+            pt.status                                   AS status,
             tr.id                      AS resource_id,
             tr.product_variant_id      AS resource_product_variant_id,
             tr.quantity                AS resource_quantity,
@@ -174,21 +218,21 @@ def _fetch_enriched_task_rows(client, task_ids: list[str]) -> list[dict]:
             proj.reference_id          AS campaign_number,
             product.sku                AS product_name,
             paddr.boundary             AS project_boundary_code
-        FROM {BRONZE_TABLE} AS pt
-        LEFT JOIN {TASK_RESOURCE_TABLE} AS tr
+        FROM {BRONZE_TABLE} AS pt FINAL
+        LEFT JOIN {TASK_RESOURCE_TABLE} AS tr FINAL
             ON tr.task_id = pt.id
             AND tr.tenant_id = pt.tenant_id
             AND tr.is_deleted = false
-        LEFT JOIN {ADDRESS_TABLE} AS addr
+        LEFT JOIN {ADDRESS_TABLE} AS addr FINAL
             ON addr.id = pt.address_id
             AND addr.tenant_id = pt.tenant_id
-        LEFT JOIN {PROJECT_TABLE} AS proj
+        LEFT JOIN {PROJECT_TABLE} AS proj FINAL
             ON proj.id = pt.project_id
             AND proj.tenant_id = pt.tenant_id
-        LEFT JOIN {PRODUCT_TABLE} as product
+        LEFT JOIN {PRODUCT_TABLE} as product FINAL
             ON product.id = tr.product_variant_id
             AND product.tenant_id = pt.tenant_id
-        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr
+        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr FINAL
             ON paddr.project_id = proj.id
             AND paddr.tenant_id = proj.tenant_id
         WHERE pt.id IN %(task_ids)s
@@ -289,8 +333,8 @@ def _resolve_household_details(client, household_keys: dict[str, set[str]]) -> d
                 pb.client_reference_id             AS task_beneficiary_ref,
                 pb.beneficiary_client_reference_id AS resolved_beneficiary_ref,
                 hh.member_count                    AS member_count
-            FROM {PROJECT_BENEFICIARY_TABLE} AS pb
-            LEFT JOIN {HOUSEHOLD_TABLE} AS hh
+            FROM {PROJECT_BENEFICIARY_TABLE} AS pb FINAL
+            LEFT JOIN {HOUSEHOLD_TABLE} AS hh FINAL
                 ON hh.client_reference_id = pb.beneficiary_client_reference_id
                 AND hh.tenant_id = pb.tenant_id
                 AND hh.is_deleted = false
@@ -320,8 +364,8 @@ def _resolve_individual_details(client, individual_keys: dict[str, set[str]]) ->
                 pb.beneficiary_client_reference_id AS resolved_beneficiary_ref,
                 ind.date_of_birth                  AS date_of_birth,
                 ind.gender                         AS gender
-            FROM {PROJECT_BENEFICIARY_TABLE} AS pb
-            LEFT JOIN {INDIVIDUAL_TABLE} AS ind
+            FROM {PROJECT_BENEFICIARY_TABLE} AS pb FINAL
+            LEFT JOIN {INDIVIDUAL_TABLE} AS ind FINAL
                 ON ind.client_reference_id = pb.beneficiary_client_reference_id
                 AND ind.tenant_id = pb.tenant_id
                 AND ind.is_deleted = false
@@ -377,19 +421,36 @@ def _attach_beneficiary_details(joined_rows: list[dict], household_details: dict
                 row["age"] = calculate_age_in_months(details["date_of_birth"])
 
 
+def _parse_uint8(value) -> int | None:
+    """
+    Returns value as an int if it parses AND fits UInt8 (0-255), else None.
+    cycleIndex/doseIndex are UInt8 in project_task_entity, but their source
+    (an arbitrary upstream string in the task's own additionalDetails) has
+    no such guarantee -- e.g. one observed task's cycleIndex is the literal
+    string "-1" (an apparent sentinel for "not applicable"). Unlike a
+    Python-level parse error, an out-of-range int is still "valid" as far
+    as int() and the rest of this function is concerned, so it would
+    otherwise reach clickhouse-connect's native insert and fail there --
+    and since native inserts are columnar/batched, one bad value fails the
+    *entire chunk's* write, not just this one row.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if 0 <= parsed <= 255 else None
+
+
 def _resolve_cycle_index(row: dict, task_fields: dict) -> int:
-    existing = task_fields.get("cycleIndex")
+    existing = _parse_uint8(task_fields.get("cycleIndex"))
     if existing is not None:
-        try:
-            return int(existing)
-        except (TypeError, ValueError):
-            pass  # fall through to compute from the project's cycles
+        return existing
 
     cycles = get_project_cycles(row.get("project_additional_details"))
     task_date = row.get("client_created_time")
     if not cycles or not task_date:
         return 0
-    return fetch_cycle_index(cycles, task_date) or 0
+    return _parse_uint8(fetch_cycle_index(cycles, task_date)) or 0
 
 
 def _resolve_dose_index(task_fields: dict) -> int:
@@ -399,15 +460,9 @@ def _resolve_dose_index(task_fields: dict) -> int:
     for computing it (a project cycle's doseCriteria/deliveryStrategy data
     isn't sufficient to unambiguously determine which dose a given task
     represents), so no computation is attempted here. Defaults to 0 if
-    absent or unparseable.
+    absent, unparseable, or out of UInt8 range.
     """
-    existing = task_fields.get("doseIndex")
-    if existing is not None:
-        try:
-            return int(existing)
-        except (TypeError, ValueError):
-            pass
-    return 0
+    return _parse_uint8(task_fields.get("doseIndex")) or 0
 
 
 def _attach_cycle_dose_delivery(joined_rows: list[dict]) -> None:

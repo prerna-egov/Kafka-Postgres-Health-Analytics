@@ -64,6 +64,14 @@ def _parse_window_bound(iso_ts: str):
 
 
 def _count_bronze_records(client, start_dt, end_dt) -> int:
+    """
+    Deliberately no FINAL here (unlike the enrichment queries below):
+    _ingested_at is not this table's ReplacingMergeTree version column
+    (last_modified_time is), so FINAL could make the row that "wins" a
+    given id's dedup carry a different _ingested_at than the duplicate that
+    actually fell inside [start_dt, end_dt) -- undercounting or pagination
+    drift against _iter_bronze_chunks below, not just a cost tradeoff.
+    """
     result = client.query(
         f"SELECT count() FROM {BRONZE_TABLE} "
         f"WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s",
@@ -75,27 +83,44 @@ def _count_bronze_records(client, start_dt, end_dt) -> int:
 def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
     """
     Yields lists of row dicts, walking the [start_dt, end_dt) bronze-ingestion
-    window via keyset pagination on (_ingested_at, id) -- the only
-    deterministic total order available (bronze has no monotonic
-    integer/sequence column, and _ingested_at alone isn't unique across a
-    single ingestion flush).
+    window via keyset pagination on (id, _ingested_at) -- id first, not
+    _ingested_at, because id is the only column here guaranteed to round-trip
+    exactly through clickhouse-connect's query parameters. _ingested_at
+    (DateTime64(3)) gets serialized as a plain string truncated to whole
+    seconds when sent back as a cursor value -- confirmed directly against
+    ClickHouse (a parameterized SELECT of a millisecond-precision datetime
+    came back as the literal string with sub-second precision silently
+    dropped). With _ingested_at as the *first* tuple element (as this used to
+    be ordered), any batch of rows sharing one ingest timestamp -- e.g. a
+    bulk bronze load done in a single insert, or a bulk raw-event-store-to-
+    bronze flush inserting more rows than one chunk_size at once -- would
+    have every row's true (sub-second) _ingested_at compare greater than the
+    truncated cursor on that first element alone, so id (the correct
+    tiebreaker) would never even be reached: the same page would be returned
+    forever, a real infinite loop (reproduced directly against ClickHouse).
+    id is unique per row and a plain string, immune to this truncation.
+    _ingested_at is kept as a tiebreaker for id itself only out of caution
+    (ids are already unique, so it's not expected to matter in practice) --
+    compared as whole milliseconds (toUnixTimestamp64Milli), an integer, for
+    the same round-trip-exactness reason, so even that tiebreaker can't
+    silently lose precision either.
     """
-    cursor_ts, cursor_id = None, None
+    cursor_id, cursor_ms = None, None
     while True:
         cursor_clause = ""
         params = {"start_dt": start_dt, "end_dt": end_dt, "limit": chunk_size}
-        if cursor_ts is not None:
-            cursor_clause = "AND (_ingested_at, id) > (%(cursor_ts)s, %(cursor_id)s)"
-            params["cursor_ts"] = cursor_ts
+        if cursor_id is not None:
+            cursor_clause = "AND (id, toUnixTimestamp64Milli(_ingested_at)) > (%(cursor_id)s, %(cursor_ms)s)"
             params["cursor_id"] = cursor_id
+            params["cursor_ms"] = cursor_ms
 
         result = client.query(
             f"""
-            SELECT _ingested_at, id
+            SELECT id, toUnixTimestamp64Milli(_ingested_at) AS ingested_at_ms
             FROM {BRONZE_TABLE}
             WHERE _ingested_at >= %(start_dt)s AND _ingested_at < %(end_dt)s
             {cursor_clause}
-            ORDER BY _ingested_at, id
+            ORDER BY id, ingested_at_ms
             LIMIT %(limit)s
             """,
             parameters=params,
@@ -107,7 +132,7 @@ def _iter_bronze_chunks(client, start_dt, end_dt, chunk_size: int):
         yield rows
 
         last_row = rows[-1]
-        cursor_ts, cursor_id = last_row["_ingested_at"], last_row["id"]
+        cursor_id, cursor_ms = last_row["id"], last_row["ingested_at_ms"]
         if len(rows) < chunk_size:
             return
 
@@ -121,25 +146,42 @@ def _fetch_enriched_project_rows(client, project_ids: list[str]) -> list[dict]:
     project_id passed in is returned, so nothing is cut off mid-project by a
     page boundary.
 
-    paddr.boundary is aliased to address_boundary since p.* already
-    includes an address_id column (the FK pointer, not the boundary code
-    itself) -- no name collision, but the alias makes the source explicit.
-    pt.id/beneficiary_type/target_no are aliased with a target_ prefix for
-    the same reason project_task_transformation.py aliases its resource
-    join columns.
+    stg_project_address and stg_project_target share several column names
+    with stg_project verbatim (tenant_id, id, created_by, created_time,
+    last_modified_by, last_modified_time, is_deleted, _ingested_at) -- `p.*`
+    would silently collide on all of those (ClickHouse renames p's copy to
+    "p.<col>" in the result set whenever a same-named column exists
+    *anywhere* in the joined tables, even if that joined column is never
+    itself selected), so this query explicitly selects and aliases only the
+    stg_project columns actually needed, rather than using p.*. paddr's/pt's
+    own columns are aliased with address_/target_ prefixes for the same
+    reason project_task_transformation.py aliases its resource join columns.
     """
     result = client.query(
         f"""
         SELECT
-            p.*,
+            p.id                   AS id,
+            p.tenant_id            AS tenant_id,
+            p.additional_details   AS additional_details,
+            p.project_number       AS project_number,
+            p.reference_id         AS reference_id,
+            p.created_by           AS created_by,
+            p.created_time         AS created_time,
+            p.last_modified_time   AS last_modified_time,
+            p.project_sub_type     AS project_sub_type,
+            p.start_date           AS start_date,
+            p.end_date             AS end_date,
+            p.project_type         AS project_type,
+            p.project_type_id      AS project_type_id,
+            p.name                 AS name,
             paddr.boundary      AS address_boundary,
             pt.id               AS target_id,
             pt.beneficiary_type AS target_beneficiary_type,
             pt.target_no        AS target_target_no
-        FROM {BRONZE_TABLE} AS p
-        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr
+        FROM {BRONZE_TABLE} AS p FINAL
+        LEFT JOIN {PROJECT_ADDRESS_TABLE} AS paddr FINAL
             ON paddr.project_id = p.id AND paddr.tenant_id = p.tenant_id
-        LEFT JOIN {PROJECT_TARGET_TABLE} AS pt
+        LEFT JOIN {PROJECT_TARGET_TABLE} AS pt FINAL
             ON pt.project_id = p.id AND pt.is_deleted = false
         WHERE p.id IN %(project_ids)s
         """,
@@ -164,6 +206,25 @@ def _get_boundary_lookup_key(row: dict) -> tuple[str, str, str] | None:
     if not code:
         return None
     return row["tenant_id"], hierarchy_type, code
+
+
+def _backfill_hierarchy_type(joined_rows: list[dict]) -> None:
+    """
+    attach_boundary_levels's lookup key is deliberately all-or-nothing (see
+    its docstring in egov_api_utils.py): if _get_boundary_lookup_key returns
+    None -- e.g. address_boundary is missing, or the boundary-service call
+    itself fails/is unreachable -- hierarchy_type comes back empty too, even
+    though it's a value already known locally from the project's own
+    additional_details, independent of any address code or external call.
+    Backfilled here (project_transformation-specific, not a change to the
+    shared egov_api_utils.py contract other entities rely on) so that known
+    data point isn't discarded just because level-code resolution couldn't
+    complete. level_one_code..level_nine_code correctly stay empty in that
+    case -- there's genuinely nothing to show without a resolved code.
+    """
+    for row in joined_rows:
+        if not row.get("hierarchy_type"):
+            row["hierarchy_type"] = parse_hierarchy_type(row.get("additional_details")) or ""
 
 
 def _get_project_type_resource_ids(additional_details) -> list[str]:
@@ -207,7 +268,7 @@ def _resolve_product_names(client, tenant_variant_ids: dict[str, set[str]]) -> d
     resolved: dict[tuple[str, str], str] = {}
     for tenant_id, variant_ids in tenant_variant_ids.items():
         result = client.query(
-            f"SELECT id, sku FROM {PRODUCT_VARIANT_TABLE} "
+            f"SELECT id, sku FROM {PRODUCT_VARIANT_TABLE} FINAL "
             f"WHERE tenant_id = %(tenant_id)s AND id IN %(variant_ids)s",
             parameters={"tenant_id": tenant_id, "variant_ids": list(variant_ids)},
         )
@@ -448,6 +509,7 @@ def project_transformation():
             lookup_keys = extract_boundary_lookup_keys(joined_rows, _get_boundary_lookup_key)
             resolved_levels = resolve_boundary_levels(lookup_keys)
             attach_boundary_levels(joined_rows, resolved_levels, _get_boundary_lookup_key)
+            _backfill_hierarchy_type(joined_rows)
             log.info(
                 "project chunk %d: attached boundary hierarchy levels to %d rows",
                 chunk_num, len(joined_rows),
