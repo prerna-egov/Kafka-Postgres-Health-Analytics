@@ -3,7 +3,10 @@
 -- ============================================================================
 -- Purpose: A typed replica of each Postgres source table, one row per source row
 -- Rules:
---   - Columns are 1:1 with the Postgres table; _ingested_at is the only addition
+--   - Columns are 1:1 with the Postgres table; _ingested_at and event_id are
+--     the only additions -- event_id is the raw event store row's own `id`
+--     (ClickHouse_ddl/02_raw_events_store.sql), letting a bronze/silver row
+--     be traced back to the exact raw event it was parsed from
 --   - snake_case names so Silver (05) reads Bronze without a rename layer
 --   - Non-Nullable: a field absent from the event lands as '' / 0 / false
 --   - Epoch millis stay Int64 -- the DateTime conversion belongs in Silver
@@ -17,6 +20,7 @@
 CREATE TABLE IF NOT EXISTS analytics.stg_household
 (
     _ingested_at              DateTime64(3) DEFAULT now64(3),
+    event_id                  String,
     id                        String,
     tenant_id                 LowCardinality(String),
     client_reference_id       String,
@@ -42,6 +46,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_household_member
 (
     _ingested_at                   DateTime64(3) DEFAULT now64(3),
+    event_id                       String,
     id                             String,
     client_reference_id            String,
     tenant_id                      LowCardinality(String),
@@ -69,6 +74,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_task
 (
     _ingested_at                            DateTime64(3) DEFAULT now64(3),
+    event_id                                String,
     id                                      String,
     client_reference_id                     String,
     tenant_id                               LowCardinality(String),
@@ -100,6 +106,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_task_resource
 (
     _ingested_at             DateTime64(3) DEFAULT now64(3),
+    event_id                 String,
     id                       String,
     tenant_id                LowCardinality(String),
     product_variant_id       String,
@@ -122,6 +129,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_address
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     door_no             String,
@@ -147,6 +155,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     project_number      String,
@@ -179,6 +188,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_target
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     project_id         String,
     beneficiary_type   LowCardinality(String),
@@ -197,6 +207,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_address
 (
     _ingested_at      DateTime64(3) DEFAULT now64(3),
+    event_id          String,
     id                String,
     tenant_id         LowCardinality(String),
     project_id        String,
@@ -222,6 +233,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_beneficiary
 (
     _ingested_at                    DateTime64(3) DEFAULT now64(3),
+    event_id                        String,
     id                              String,
     tenant_id                       LowCardinality(String),
     project_id                      String,
@@ -249,6 +261,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_staff
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     project_id         String,
@@ -270,6 +283,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_project_facility
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     project_id         String,
@@ -289,6 +303,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_individual
 (
     _ingested_at              DateTime64(3) DEFAULT now64(3),
+    event_id                  String,
     id                        String,
     user_id                   String,
     user_uuid                 String,
@@ -332,6 +347,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_stock
 (
     _ingested_at              DateTime64(3) DEFAULT now64(3),
+    event_id                  String,
     id                        String,
     client_reference_id       String,
     tenant_id                 LowCardinality(String),
@@ -370,6 +386,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_stock_reconciliation
 (
     _ingested_at               DateTime64(3) DEFAULT now64(3),
+    event_id                   String,
     id                         String,
     client_reference_id        String,
     tenant_id                  LowCardinality(String),
@@ -400,6 +417,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_facility
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     client_reference_id String,
@@ -423,6 +441,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_product
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     type               LowCardinality(String),
@@ -443,6 +462,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_product_variant
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     product_id         String,
@@ -463,6 +483,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_service
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     service_def_id     String,
@@ -482,6 +503,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_pgr_service
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     service_code        LowCardinality(String),
@@ -507,6 +529,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_pgr_address
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     tenant_id          LowCardinality(String),
     id                 String,
     parent_id          String,
@@ -537,6 +560,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_attendance_register
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     register_number    String,
@@ -564,6 +588,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_attendance_staff
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     individual_id      String,
     register_id        String,
@@ -584,6 +609,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_attendance_attendee
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     individual_id      String,
     register_id        String,
@@ -604,6 +630,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_attendance_log
 (
     _ingested_at              DateTime64(3) DEFAULT now64(3),
+    event_id                  String,
     id                        String,
     individual_id             String,
     register_id               String,
@@ -629,6 +656,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_expense_bill
 (
     _ingested_at       DateTime64(3) DEFAULT now64(3),
+    event_id           String,
     id                 String,
     tenant_id          LowCardinality(String),
     bill_date          Int64,
@@ -656,6 +684,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_expense_party
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     type                LowCardinality(String),
@@ -681,6 +710,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_expense_billdetail
 (
     _ingested_at          DateTime64(3) DEFAULT now64(3),
+    event_id              String,
     id                    String,
     tenant_id             LowCardinality(String),
     reference_id          String,
@@ -707,6 +737,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_expense_lineitem
 (
     _ingested_at          DateTime64(3) DEFAULT now64(3),
+    event_id              String,
     id                    String,
     bill_detail_id        String,
     tenant_id             LowCardinality(String),
@@ -730,6 +761,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_referral
 (
     _ingested_at                            DateTime64(3) DEFAULT now64(3),
+    event_id                                String,
     id                                      String,
     client_reference_id                     String,
     tenant_id                               LowCardinality(String),
@@ -763,6 +795,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_side_effect
 (
     _ingested_at                            DateTime64(3) DEFAULT now64(3),
+    event_id                                String,
     id                                      String,
     client_reference_id                     String,
     tenant_id                               LowCardinality(String),
@@ -790,6 +823,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_hf_referral
 (
     _ingested_at               DateTime64(3) DEFAULT now64(3),
+    event_id                   String,
     id                         String,
     client_reference_id        String,
     tenant_id                  LowCardinality(String),
@@ -821,6 +855,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_individual_address
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     individual_id       String,
     address_id          String,
     type                LowCardinality(String),
@@ -838,6 +873,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_user_action
 (
     _ingested_at               DateTime64(3) DEFAULT now64(3),
+    event_id                   String,
     id                         String,
     client_reference_id        String,
     tenant_id                  LowCardinality(String),
@@ -868,6 +904,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_service_attribute_value
 (
     _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    event_id                     String,
     id                           String,
     reference_id                 String,
     attribute_code               LowCardinality(String),
@@ -887,6 +924,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_service_definition
 (
     _ingested_at        DateTime64(3) DEFAULT now64(3),
+    event_id            String,
     id                  String,
     tenant_id           LowCardinality(String),
     code                String,
@@ -905,6 +943,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_muster_roll
 (
     _ingested_at            DateTime64(3) DEFAULT now64(3),
+    event_id                String,
     id                      String,
     tenant_id               LowCardinality(String),
     musterroll_number       String,
@@ -930,6 +969,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_attendance_summary
 (
     _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    event_id                     String,
     id                           String,
     individual_id                String,
     muster_roll_id               String,
@@ -956,6 +996,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS analytics.stg_device_tokens
 (
     _ingested_at                 DateTime64(3) DEFAULT now64(3),
+    event_id                     String,
     id                           String,
     user_id                      String,
     device_type                  LowCardinality(String),
