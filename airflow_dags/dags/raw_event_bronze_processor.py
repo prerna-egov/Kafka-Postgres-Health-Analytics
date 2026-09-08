@@ -40,6 +40,17 @@ from clickhouse_utils import get_clickhouse_client  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+# Lineage column carrying the raw event's own id, so a Bronze row can be traced
+# back to the exact event that produced it. Populated by the processor rather
+# than the config mapping -- it comes from the raw table, not the Debezium
+# payload. Never part of the Bronze ORDER BY: it is unique per event, so
+# including it would stop ReplacingMergeTree ever collapsing versions.
+EVENT_ID_COLUMN = "event_id"
+
+# Column order returned by fetch_raw_events: raw, event_time, id, et_ms
+RAW_COL_EVENT_ID = 2
+
+
 # ----------------------------------------------------------------------
 # Debezium envelope
 # ----------------------------------------------------------------------
@@ -162,6 +173,16 @@ def validate_table_mapping(
             f"[{table_config['name']}] Configured Bronze columns "
             f"do not exist in {table_config['bronze_table']}: "
             f"{missing}"
+        )
+
+    # Not config-driven, so it is checked separately -- without it the insert
+    # would fail later with an opaque ClickHouse "no such column" error.
+    if EVENT_ID_COLUMN not in bronze_schema:
+        raise ValueError(
+            f"[{table_config['name']}] {table_config['bronze_table']} has no "
+            f"{EVENT_ID_COLUMN} column. Add it with: ALTER TABLE "
+            f"{table_config['bronze_table']} ADD COLUMN {EVENT_ID_COLUMN} UUID "
+            f"AFTER _ingested_at"
         )
 
     logger.info(
@@ -641,7 +662,7 @@ def transform_page(
 
     mapping = table_config["columns"]
 
-    bronze_columns = list(mapping.values())
+    bronze_columns = [EVENT_ID_COLUMN] + list(mapping.values())
 
     bronze_rows = []
 
@@ -657,7 +678,7 @@ def transform_page(
             skipped_events += 1
             continue
 
-        bronze_row = []
+        bronze_row = [raw_row[RAW_COL_EVENT_ID]]
 
         for source_column, bronze_column in mapping.items():
 
