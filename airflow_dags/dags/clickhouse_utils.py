@@ -1,4 +1,4 @@
-"""Shared ClickHouse connectivity helper for bronze-to-silver transformation DAGs."""
+"""Shared ClickHouse connectivity helper for raw-to-bronze extraction and bronze-to-silver transformation DAGs."""
 from __future__ import annotations
 
 import clickhouse_connect
