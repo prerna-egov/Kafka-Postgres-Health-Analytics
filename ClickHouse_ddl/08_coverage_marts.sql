@@ -149,21 +149,25 @@ GROUP BY
 
 -- 3. mv_dm_campaign_hierarchy -> dm_campaign_hierarchy
 --
--- is_campaign_root / is_campaign_leaf come from ANCESTOR-set membership, not
--- immediate-parent membership. On a ragged tree -- campaign has nodes at M1 and
--- M1/M2/M3 but not M2 -- immediate-parent logic marks M3 root (parent M2 absent)
--- AND M1 leaf (M1 is nobody's immediate parent), so both cuts return M1 + M3 and
--- double-count. Ancestor logic gives root = {M1}, leaf = {M3}. Verified.
+-- Emits ONE ROW PER LEAF PATH. The target table stores only the leaves and only
+-- their level block, because that block is already the complete root-to-leaf
+-- path -- every ancestor is readable from it. Navigation idioms are on item 4
+-- in 07.
 --
--- rollup_parent_code (nearest ancestor actually PRESENT in the campaign, via
--- argMax over ancestor_level) is what makes drill-down gapless on such a tree,
--- and rollup_parent_code = '' IS is_campaign_root -- so every campaign is
--- guaranteed at least one root and a root-cut denominator can never be
--- spuriously empty.
+-- THE LEAF COMPUTATION STAYS HERE, and that is the point of the change: the
+-- complexity moves out of the stored table into this view, it does not vanish.
+-- A leaf is a node that is not an ANCESTOR of any other node in the campaign,
+-- established by the ancestor-set self-join below -- NOT "a row at the
+-- campaign's deepest level". On a ragged tree (nodes at M1 and M1/M2/M3 but not
+-- M2) a max_level filter would discard the M1 branch entirely and make
+-- everything beneath it unaddressable; ancestor-set membership keeps both
+-- branches' leaves. Every node on current data is a leaf, so the two are
+-- indistinguishable against this instance -- which is exactly why the
+-- distinction is spelled out here rather than trusted to testing.
 --
--- ifNull() on the LEFT JOIN results is deliberate. With the default
--- join_use_nulls = 0 an unmatched column is ''/0 and the bare comparison would
--- work, but the flags would silently invert if a profile ever set it to 1.
+-- ifNull() on the LEFT JOIN result is deliberate. With the default
+-- join_use_nulls = 0 an unmatched column is '' and the bare comparison would
+-- work, but the leaf test would silently invert if a profile ever set it to 1.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_hierarchy
 REFRESH EVERY 1 HOUR
     DEPENDS ON mv_dm_targets_base
@@ -225,217 +229,20 @@ hits AS (
     INNER JOIN nodes AS n
         ON e.tenant_id = n.tenant_id AND e.campaign_number = n.campaign_number AND e.ancestor_code = n.code
 )
-SELECT
-    cityHash64(n.tenant_id, n.campaign_number, toString(n.node_level), n.code) AS hierarchy_sk,
-    cityHash64(n.tenant_id, n.campaign_number)                                 AS campaign_sk,
-    n.tenant_id                                AS tenant_id,
-    n.campaign_number                          AS campaign_number,
-    n.hierarchy_type                           AS hierarchy_type,
-    n.node_level                               AS node_level,
-    n.code                                     AS code,
-    n.boundary_path                            AS boundary_path,
-    n.boundary_path_str                        AS boundary_path_str,
-    n.parent_code                              AS parent_code,
-    if(ifNull(rp.rollup_parent_code, '') = '',
-       toUInt64(0),
-       cityHash64(n.tenant_id, n.campaign_number,
-                  toString(ifNull(rp.rollup_parent_level, 0)),
-                  ifNull(rp.rollup_parent_code, '')))  AS rollup_parent_sk,
-    ifNull(rp.rollup_parent_code, '')          AS rollup_parent_code,
-    toUInt8(ifNull(rp.rollup_parent_level, 0)) AS rollup_parent_level,
-    ifNull(rp.rollup_parent_code, '') = ''     AS is_campaign_root,
-    ifNull(i.code, '') = ''                    AS is_campaign_leaf,
-    (n.parent_code != '') AND (ifNull(rp.rollup_parent_code, '') = n.parent_code) AS parent_in_campaign,
+SELECT DISTINCT
+    n.tenant_id       AS tenant_id,
+    n.campaign_number AS campaign_number,
+    n.hierarchy_type  AS hierarchy_type,
     n.level_one_code, n.level_two_code, n.level_three_code, n.level_four_code, n.level_five_code,
-    n.level_six_code, n.level_seven_code, n.level_eight_code, n.level_nine_code
+    n.level_six_code, n.level_seven_code, n.level_eight_code, n.level_nine_code,
+    n.node_level      AS node_level
 FROM nodes AS n
--- Nearest ancestor present in the campaign. No match at all <=> campaign root.
-LEFT JOIN (
-    SELECT tenant_id, campaign_number, child_code AS code,
-           argMax(ancestor_code, ancestor_level) AS rollup_parent_code,
-           toUInt8(max(ancestor_level))          AS rollup_parent_level
-    FROM hits
-    GROUP BY tenant_id, campaign_number, child_code
-) AS rp
-    ON n.tenant_id = rp.tenant_id AND n.campaign_number = rp.campaign_number AND n.code = rp.code
--- Any node that is an ancestor of another node is internal, i.e. not a leaf.
+-- Any node that is an ancestor of another node is internal; no match => leaf.
 LEFT JOIN (
     SELECT DISTINCT tenant_id, campaign_number, ancestor_code AS code FROM hits
 ) AS i
-    ON n.tenant_id = i.tenant_id AND n.campaign_number = i.campaign_number AND n.code = i.code;
-
-
--- 4. mv_dm_campaign -> dm_campaign
--- Aggregates the node dim into per-campaign structure, and joins project_entity
--- for the descriptive fields the node dim does not carry.
---
--- levels_present / level_node_counts are built from one sorted tuple array so
--- they stay index-aligned; they are a sorted LIST rather than being indexed by
--- absolute level, because a ragged campaign can skip a level entirely.
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign
-REFRESH EVERY 1 HOUR
-    DEPENDS ON mv_dm_campaign_hierarchy
-TO dm_campaign
-AS
-WITH per_level AS (
-    SELECT
-        tenant_id, campaign_number, hierarchy_type, node_level,
-        toUInt32(count())         AS node_cnt,
-        countIf(is_campaign_root) AS root_cnt,
-        countIf(is_campaign_leaf) AS leaf_cnt,
-        countIf(node_level > 1 AND parent_code != '' AND NOT parent_in_campaign) AS orphan_cnt
-    FROM dm_campaign_hierarchy
-    GROUP BY tenant_id, campaign_number, hierarchy_type, node_level
-),
-shape AS (
-    SELECT
-        tenant_id, campaign_number, hierarchy_type,
-        toUInt8(min(node_level)) AS root_level,
-        toUInt8(max(node_level)) AS max_level,
-        arraySort(x -> x.1, groupArray((node_level, node_cnt))) AS lvl_pairs,
-        arrayMap(x -> x.1, lvl_pairs) AS levels_present,
-        arrayMap(x -> x.2, lvl_pairs) AS level_node_counts,
-        toUInt8(length(lvl_pairs))    AS level_count,
-        toUInt32(sum(node_cnt))       AS node_count,
-        toUInt32(sum(root_cnt))       AS root_node_count,
-        toUInt32(sum(leaf_cnt))       AS leaf_node_count,
-        toUInt32(sum(orphan_cnt))     AS orphan_node_count
-    FROM per_level
-    GROUP BY tenant_id, campaign_number, hierarchy_type
-),
--- Descriptive fields + the campaign window, straight from the target staging
--- mart (which already carries the same exclusions the node dim was built from).
-descr AS (
-    SELECT
-        t.tenant_id AS tenant_id,
-        t.campaign_number AS campaign_number,
-        min(t.start_date) AS start_date,
-        max(t.end_date)   AS end_date,
-        max(t.total_days) AS total_days
-    FROM dm_targets_base AS t
-    GROUP BY t.tenant_id, t.campaign_number
-),
-names AS (
-    SELECT
-        tenant_id,
-        campaign_number,
-        -- anyHeavy, not any(): a campaign's projects all share a name/type in
-        -- practice, but if they diverge report the dominant value rather than an
-        -- arbitrary one.
-        anyHeavy(project_name) AS campaign_name,
-        anyHeavy(project_type) AS project_type
-    FROM project_entity FINAL
-    WHERE campaign_number != ''
-    GROUP BY tenant_id, campaign_number
-)
-SELECT
-    cityHash64(s.tenant_id, s.campaign_number) AS campaign_sk,
-    s.tenant_id         AS tenant_id,
-    s.campaign_number   AS campaign_number,
-    s.hierarchy_type    AS hierarchy_type,
-    ifNull(nm.campaign_name, '') AS campaign_name,
-    ifNull(nm.project_type, '')  AS project_type,
-    s.root_level        AS root_level,
-    s.max_level         AS max_level,
-    s.level_count       AS level_count,
-    s.levels_present    AS levels_present,
-    s.level_node_counts AS level_node_counts,
-    s.node_count        AS node_count,
-    s.root_node_count   AS root_node_count,
-    s.leaf_node_count   AS leaf_node_count,
-    s.orphan_node_count AS orphan_node_count,
-    ifNull(d.start_date, toDate(0)) AS start_date,
-    ifNull(d.end_date,   toDate(0)) AS end_date,
-    toInt32(ifNull(d.total_days, 0)) AS total_days
-FROM shape AS s
-LEFT JOIN descr AS d  ON s.tenant_id = d.tenant_id  AND s.campaign_number = d.campaign_number
-LEFT JOIN names AS nm ON s.tenant_id = nm.tenant_id AND s.campaign_number = nm.campaign_number;
-
-
--- 5. mv_dm_campaign_target_fact -> dm_campaign_target_fact
---
--- hierarchy_sk is NOT joined for -- it is the identical deterministic hash
--- expression the dim uses, over (tenant, campaign, node_level, code), all of
--- which come from a single dm_targets_base row. The keys line up by construction.
---
--- The root/leaf machinery below mirrors mv_dm_campaign_hierarchy's exactly,
--- except every join is additionally keyed on target_type. That is the whole
--- point: a campaign's HOUSEHOLD node set is typically a strict subset of its
--- INDIVIDUAL one (218 of 302 projects in table_dumps/project_target.csv carry
--- INDIVIDUAL only), so the union flags on the dim return 0 for a HOUSEHOLD
--- root cut whenever the union root carries no HOUSEHOLD row.
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_target_fact
-REFRESH EVERY 1 HOUR
-    DEPENDS ON mv_dm_targets_base
-TO dm_campaign_target_fact
-AS
-WITH
-tt_nodes AS (
-    SELECT
-        tenant_id, campaign_number, target_type,
-        node_level, code, ancestor_codes,
-        target_population, target_per_day,
-        start_date, end_date, total_days
-    FROM (
-        SELECT
-            tenant_id, campaign_number, target_type,
-            target_population, target_per_day,
-            start_date, end_date, total_days,
-            -- Same arrayZip idiom as the dim: the ABSOLUTE level is bound to each
-            -- code before the empty tail is filtered off, so a gap cannot renumber
-            -- anything below it.
-            arrayFilter(t -> t.2 != '', arrayZip(range(1, 10),
-                [level_one_code, level_two_code, level_three_code,
-                 level_four_code, level_five_code, level_six_code,
-                 level_seven_code, level_eight_code, level_nine_code])) AS pairs,
-            if(empty(pairs), toUInt8(0), toUInt8(pairs[-1].1))     AS node_level,
-            if(empty(pairs), '', pairs[-1].2)                      AS code,
-            arrayMap(t -> t.2, arraySlice(pairs, 1, length(pairs) - 1)) AS ancestor_codes
-        FROM dm_targets_base
-    )
-    -- Same >9-level truncation guard as the dim, so the fact can never reference
-    -- a hierarchy_sk the dim does not contain.
-    WHERE node_level > 0
-),
-tt_hits AS (
-    SELECT
-        e.tenant_id AS tenant_id, e.campaign_number AS campaign_number,
-        e.target_type AS target_type, e.child_code AS child_code, e.ancestor_code AS ancestor_code
-    FROM (
-        SELECT tenant_id, campaign_number, target_type, code AS child_code,
-               arrayJoin(ancestor_codes) AS ancestor_code
-        FROM tt_nodes
-    ) AS e
-    INNER JOIN tt_nodes AS n
-        ON e.tenant_id = n.tenant_id AND e.campaign_number = n.campaign_number
-       AND e.target_type = n.target_type AND e.ancestor_code = n.code
-)
-SELECT
-    cityHash64(n.tenant_id, n.campaign_number)                                    AS campaign_sk,
-    cityHash64(n.tenant_id, n.campaign_number, toString(n.node_level), n.code)    AS hierarchy_sk,
-    n.tenant_id        AS tenant_id,
-    n.campaign_number  AS campaign_number,
-    n.target_type      AS target_type,
-    n.node_level       AS node_level,
-    n.code             AS code,
-    ifNull(nr.code, '') = '' AS is_target_type_root,
-    ifNull(nl.code, '') = '' AS is_target_type_leaf,
-    n.target_population, n.target_per_day,
-    n.start_date, n.end_date, n.total_days
-FROM tt_nodes AS n
--- A node with a target-bearing ancestor OF THE SAME target_type is not a root.
-LEFT JOIN (
-    SELECT DISTINCT tenant_id, campaign_number, target_type, child_code AS code FROM tt_hits
-) AS nr
-    ON n.tenant_id = nr.tenant_id AND n.campaign_number = nr.campaign_number
-   AND n.target_type = nr.target_type AND n.code = nr.code
--- A node that is an ancestor of another node of the same target_type is not a leaf.
-LEFT JOIN (
-    SELECT DISTINCT tenant_id, campaign_number, target_type, ancestor_code AS code FROM tt_hits
-) AS nl
-    ON n.tenant_id = nl.tenant_id AND n.campaign_number = nl.campaign_number
-   AND n.target_type = nl.target_type AND n.code = nl.code;
-
+    ON n.tenant_id = i.tenant_id AND n.campaign_number = i.campaign_number AND n.code = i.code
+WHERE ifNull(i.code, '') = '';
 
 -- 6. mv_dm_coverage_by_node -> dm_coverage_by_node
 -- COVERAGE AT EVERY LEVEL ("drilldown till the lowest level")
@@ -446,16 +253,14 @@ LEFT JOIN (
 -- level. range(1, 10) is [1..9], matching the nine level columns.
 --
 -- No coverage ratio is stored. It is computed at query time against
--- dm_campaign_target_fact on hierarchy_sk, so the choice of denominator cut is
--- not frozen into storage.
+-- dm_targets_base, joined on (tenant_id, campaign_number, node_level, code), so
+-- the choice of denominator cut is not frozen into storage.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_coverage_by_node
 REFRESH EVERY 1 HOUR
     DEPENDS ON mv_dm_successful_deliveries_base
 TO dm_coverage_by_node
 AS
 SELECT
-    cityHash64(tenant_id, campaign_number)                              AS campaign_sk,
-    cityHash64(tenant_id, campaign_number, toString(node_level), code)  AS hierarchy_sk,
     tenant_id,
     campaign_number,
     node_level,
@@ -488,7 +293,7 @@ GROUP BY tenant_id, campaign_number, node_level, code, product_name, event_date;
 --
 -- DEPENDS ON is load-bearing: without it this view can refresh against a
 -- half-rebuilt base mart. It names the node marts rather than mv_dm_targets_base
--- because the denominator now comes from them.
+-- because the denominator now comes from dm_targets_base.
 --
 -- CAVEAT: the target_type = 'INDIVIDUAL' filter means a campaign whose targets
 -- are all HOUSEHOLD produces no target row, and all of its deliveries drop out
@@ -496,7 +301,7 @@ GROUP BY tenant_id, campaign_number, node_level, code, product_name, event_date;
 -- become a grouping column here instead of a filter.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_coverage
 REFRESH EVERY 1 HOUR
-    DEPENDS ON mv_dm_successful_deliveries_base, mv_dm_campaign_target_fact
+    DEPENDS ON mv_dm_successful_deliveries_base, mv_dm_targets_base
 TO dm_campaign_coverage
 AS
 WITH campaign_deliveries AS (
@@ -514,7 +319,7 @@ campaign_targets_cte AS (
         f.tenant_id AS tenant_id,
         f.campaign_number AS campaign_number,
         sum(f.target_population) AS target_population
-    FROM dm_campaign_target_fact AS f
+    FROM dm_targets_base AS f
     WHERE f.target_type = 'INDIVIDUAL'
       -- THE ROLL-UP CUT, and the fix for a real double-count. A campaign creates
       -- one project per boundary node, so it carries a target row at EVERY level
@@ -526,10 +331,10 @@ campaign_targets_cte AS (
       -- The ROOT cut is used rather than the leaf cut because it is the
       -- campaign's own declared total, and it is robust to a leaf project whose
       -- target row has not landed in bronze yet (which would silently shrink a
-      -- leaf-cut denominator). is_campaign_root is relative to the campaign's
-      -- ACTUAL node set, so every campaign has at least one root and this can
-      -- never be spuriously empty -- even for a campaign that starts below
-      -- level 1, or one that is a forest of disjoint subtrees.
+      -- leaf-cut denominator). is_target_type_root is relative to the campaign's
+      -- ACTUAL node set for this target_type, so every campaign has at least one
+      -- root and this can never be spuriously empty -- even for a campaign that
+      -- starts below level 1, or one that is a forest of disjoint subtrees.
       --
       -- ROOT IS CORRECT HERE, AND ONLY HERE. This mart is CAMPAIGN GRAIN -- one
       -- number for the whole campaign, no boundary bucketing -- and the root
@@ -543,13 +348,14 @@ campaign_targets_cte AS (
       -- that buckets by district must select node_level = 3 AND code = <the
       -- district>, not the root. Root would hand every district the campaign's
       -- single top row, or nothing when the root sits above the bucket level.
-      -- See "HOW TO READ A TARGET AT A LEVEL" on item 6 in 07.
+      -- See the "NOT DIRECTLY SUMMABLE" block on item 2 in 07.
       --
-      -- is_target_type_root, NOT the dim's is_campaign_root: the dim's flags are
-      -- computed over the UNION of all target types' nodes, and a campaign's
-      -- HOUSEHOLD node set is usually a strict subset of its INDIVIDUAL one, so
-      -- the union flag would return 0 for any type whose nodes exclude the union
-      -- root. Verified failure mode, not a hypothetical.
+      -- The flag is keyed on target_type, never on a union of all types: a
+      -- campaign's HOUSEHOLD node set is usually a strict subset of its
+      -- INDIVIDUAL one, so a union flag would return 0 for any type whose nodes
+      -- exclude the union root. Verified failure mode, not a hypothetical.
+      -- (dm_campaign_hierarchy carries no flags at all now -- it is leaf paths
+      -- only -- so this is the one place the cut lives.)
       --
       -- If root and leaf cuts ever disagree the source targets do not roll up
       -- exactly; validation V1/V4 in the plan surface that rather than hiding it.
