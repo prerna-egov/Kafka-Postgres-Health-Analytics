@@ -4,30 +4,18 @@
 -- Gold layer for the DSS_HEALTH_COMPLAINTS tab of the
 -- `provincial-health-dashboard-iccd` dashboard (viz ids 731-738 in
 -- configs/egov-dss-dashboards/dashboard-analytics/MasterDashboardConfig.json),
--- reproducing from ClickHouse silver what those panels today read out of the
--- `transformer-pgr-services` Elasticsearch index. The per-panel ES
--- aggregations live in ChartApiConfig.json, keyed by the chart ids named in
--- the mapping table below.
---
--- Deliberately scoped to that one dashboard: the national-* and district-*
--- ICCD dashboards, and the Overview tab's totalComplaintsRegisteredICCD, are
--- not covered here.
+-- reproducing from silver what those panels read out of Elasticsearch. The
+-- per-panel ES aggregations live in ChartApiConfig.json, keyed by the chart ids
+-- in the mapping below. Scoped to this dashboard only.
 --
 -- LOGIC only, mirroring the 07/08 split. The two target tables
 -- (dm_complaints_base, dm_complaints_open_ageing) are defined in
 -- 07_mart_tables.sql as items 8 and 9 and must be created BEFORE this file
 -- runs -- the views below write into them via TO <table>.
 --
--- Each refresh rebuilds its target wholesale (a refreshable MV with a TO
--- target and no APPEND clause replaces the target's contents atomically), so
--- there are never multiple versions of a row to collapse -- which is why
--- those targets are plain MergeTree, not ReplacingMergeTree.
---
--- Single silver source: pgr_complaints_entity (05_silver_tables.sql), written
--- by airflow_dags/dags/pgr_transformation.py. It is
--- ReplacingMergeTree(last_modified_time), so every read below uses FINAL --
--- without it, CDC row versions that background merges haven't collapsed yet
--- are counted more than once.
+-- Single silver source: pgr_complaints_entity, written by
+-- airflow_dags/dags/pgr_transformation.py. It is ReplacingMergeTree, so every
+-- read below uses FINAL.
 --
 -- Field mapping from the ES aggregations to silver:
 --     Data.service.serviceCode                     -> service_code (the complaint TYPE)

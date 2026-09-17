@@ -12,14 +12,7 @@
 -- created BEFORE this file runs -- the views below write into them via
 -- TO <table>.
 --
--- Each refresh rebuilds its target wholesale (a refreshable MV with a TO
--- target and no APPEND clause replaces the target's contents atomically), so
--- there are never multiple versions of a row to collapse -- which is why those
--- targets are plain MergeTree, not ReplacingMergeTree.
---
--- Every silver source here is ReplacingMergeTree, so every read uses FINAL:
--- without it, CDC row versions that background merges haven't collapsed yet
--- are counted more than once.
+-- Every silver source is ReplacingMergeTree, so every read uses FINAL.
 --
 -- THIS TAB IS A STRAIGHT PORT, unlike the Overview tab. All six ES indexes it
 -- reads are raw Data.-prefixed event indexes, so each metric below translates
@@ -125,30 +118,20 @@
 --                                                  node_level=3 AND code=level_three_code
 --         drill InventorySummaryByWarehouseICCD : identical, GROUP BY facility_name
 --
--- KNOWN GAPS (properties of the existing pipeline, not of this file):
---   * 717's DENOMINATOR IS 0 ON THIS INSTANCE. project_staff_entity.role is
---     empty on all 575 rows, so "warehouse managers created" counts nothing and
---     the rate is NULL. The numerator works (147 distinct WM users in
---     stock_entity). Both sides are stored as separate components precisely so
---     the rate starts resolving on its own once role is populated -- no mart
---     change will be needed then.
---   * TARGET-DEPENDENT PANELS RETURN EMPTY. dm_targets_base is empty
---     here (the deployed dm_targets_base predates the current 07 DDL, so the
---     node-model views were never created). Deploying 07/08 is out of scope by
---     instruction. This affects 719's Required Stock, 722's DaysStockLasts and
---     StockStatus, and 723's Stock Target To Receive / Days To Last.
---   * COORDINATES AND DISTRICTS NEVER CO-OCCUR: 651 stock rows carry lat/lng
---     and none of them also carries a district code, so viz 722's district-grain
---     points query yields nothing. Mart 16 is facility-grain for that reason.
---   * RECONCILIATION BOUNDARY COVERAGE IS 12 OF 174 ROWS, so panel 720's manual
---     side is nearly empty at district grain whatever the mart does.
---   * facility_type on this instance is WAREHOUSE / STAFF / ''. The ES
---     'Monitor Local' exclusion matches nothing here but is kept for fidelity.
---   * Several ES terms aggs on this tab omit `size` and silently truncate to 10
---     districts (721's five named series, 723). Deliberately NOT reproduced --
---     that is a config bug, not a spec.
---   * campaign_number may legitimately be ''. Not filtered out; dropping those
---     rows would hide the gap rather than surface it.
+-- KNOWN GAPS -- properties of the pipeline, not of this file:
+--   * 717's denominator is empty until project_staff_entity.role is populated;
+--     the numerator already works. Both sides are stored as components so the
+--     rate starts resolving on its own, with no mart change.
+--   * Target-dependent panels (719's required stock, 722's days-of-stock and
+--     stock status, 723's target columns) are empty until dm_targets_base is
+--     populated.
+--   * Coordinates and resolved boundaries rarely co-occur on stock rows, so the
+--     district-grain points query yields little; mart 16 is facility-grain for
+--     that reason.
+--   * Reconciliation rows seldom carry a resolved boundary, so 720's manual side
+--     is sparse at district grain whatever the mart does.
+--   * The ES 'Monitor Local' exclusion for the warehouse count is kept for
+--     fidelity even where no such facility type exists.
 -- ==========================================================================
 
 SET allow_experimental_refreshable_materialized_view = 1;
@@ -164,8 +147,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- upper(event_type) is NOT applied on the way in -- event_type is stored
 -- verbatim so the mart stays a faithful image of the source vocabulary, and
 -- consumers match on it directly. (dm_stock_balance does normalize case,
--- because it collapses the column away and has to decide.) On current data the
--- values are exactly 'RECEIVED' and 'DISPATCHED'.
+-- because it collapses the column away and has to decide.)
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_transactions
 REFRESH EVERY 1 HOUR
 TO dm_stock_transactions
@@ -360,7 +342,10 @@ SELECT
     level_nine_code,
     role,
     uniqExactStateIf(user_key, src = 'CREATED') AS users_created_uniq,
-    uniqExactStateIf(user_key, src = 'SYNCED')  AS users_synced_uniq
+    uniqExactStateIf(user_key, src = 'SYNCED')  AS users_synced_uniq,
+    -- Same measures for this row only, so the table reads without a Merge.
+    toUInt64(uniqExactIf(user_key, src = 'CREATED')) AS users_created_count,
+    toUInt64(uniqExactIf(user_key, src = 'SYNCED'))  AS users_synced_count
 FROM
 (
     SELECT
