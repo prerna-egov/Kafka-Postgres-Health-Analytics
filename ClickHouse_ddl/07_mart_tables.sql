@@ -20,9 +20,8 @@
 
 -- 1. dm_successful_deliveries_base
 -- Grain: one row per (tenant, campaign, boundary path, product, delivery date).
--- project_task_entity holds one row per task *resource*, so a task delivering
--- two products contributes two rows -- total_administered is doses/products
--- administered, not distinct people.
+-- One row per task RESOURCE, so a task delivering two products contributes two
+-- rows: total_administered is doses, not distinct people.
 CREATE TABLE IF NOT EXISTS dm_successful_deliveries_base (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -52,43 +51,25 @@ SETTINGS index_granularity = 8192;
 
 
 -- 2. dm_targets_base
--- Grain: one row per (tenant, campaign, target_type, boundary NODE).
+-- Grain: one row per (tenant, campaign, target_type, boundary node).
 --
 -- The level_*_code block is a dense, left-packed root-to-node path, so the path
--- IS the node identity -- this is already node grain, not path grain. It is the
--- staging layer the node model in 4/5/6 below is derived from; it exists as its
--- own table (rather than a CTE inside mv_dm_campaign_hierarchy) because
--- ClickHouse INLINES `WITH ... AS (subquery)` at every reference, and that MV
--- reads its input three times.
+-- IS the node identity. Kept as its own table rather than a CTE because
+-- ClickHouse inlines `WITH ... AS (subquery)` at every reference.
 --
--- NOT DIRECTLY SUMMABLE -- and node_level is how you avoid it. A target is
--- declared at the boundary hierarchy's LOWEST level and then SUMMED UPWARD, so
--- a parent node's project carries a target equal to the sum of its children's.
--- Every level's row is a complete, correct total for its own subtree, and the
--- same target is therefore represented once at every depth. A bare
--- SUM(target_population) over this table multiplies the true total by roughly
--- the depth of the tree -- on a 3-level tree carrying 1000, it returns 3000.
+-- NOT DIRECTLY SUMMABLE. A target is declared at the hierarchy's LOWEST level
+-- and summed upward, so a parent carries the sum of its children and the same
+-- target appears once at every depth. A bare SUM multiplies the true total by
+-- the depth of the tree. Pick exactly one:
 --
--- Pick exactly one of:
---
---   (1) TARGET AT A REPORTING LEVEL N -- and because the full path is on every
---       row, a CASCADING filter chain works here, which is the whole reason
---       this mart replaced the node-grain fact:
---
+--   (1) At a reporting level -- the full path is on the row, so a cascading
+--       filter chain works:
 --           WHERE target_type = '<t>' AND node_level = N
---             AND level_two_code   = :province
---             AND level_three_code = :district      -- and so on down the chain
+--             AND level_two_code = :province AND level_three_code = :district
 --
---   (2) CAMPAIGN-WIDE TOTAL, no boundary bucketing:
---
---           WHERE target_type = '<t>' AND is_target_type_root
---
--- Never combine them, and never SUM without one of them.
---
--- node_level lives here rather than only on (6) deliberately: without it the
--- only way to select a level from this table was to re-derive the whole
--- arrayFilter/arrayZip expression by hand, which made the wrong (summing) query
--- the path of least resistance.
+--   (2) Campaign-wide -- the shallowest level the campaign has, which is its
+--       own declared total. Not a fixed level: campaigns start at different
+--       depths. See mv_dm_campaign_coverage in 08.
 CREATE TABLE IF NOT EXISTS dm_targets_base (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -108,19 +89,6 @@ CREATE TABLE IF NOT EXISTS dm_targets_base (
 
     node_level                  UInt8,
 
-    -- Per-target_type cuts, moved here from the retired dm_campaign_target_fact
-    -- (6). Keyed on target_type, NOT on a union of all types: a campaign's
-    -- HOUSEHOLD node set is typically a strict subset of its INDIVIDUAL one
-    -- (218 of 302 projects in table_dumps/project_target.csv carry INDIVIDUAL
-    -- only), so a union flag returns 0 for a HOUSEHOLD root cut whenever the
-    -- union root carries no HOUSEHOLD row.
-    --
-    -- Both are FALSE on node_level = 0 rows: an unresolved path is neither a
-    -- root nor a leaf of anything, and this is what keeps the ~11.5M of
-    -- unattributed target out of every root-cut total.
-    is_target_type_root         Bool,
-    is_target_type_leaf         Bool,
-
     target_population           Int64,                  -- sum of project_entity.overall_target
     target_per_day              Int64,                  -- sum of project_entity.target_per_day; the "planned" series for 715/718/723/754
 
@@ -138,8 +106,8 @@ SETTINGS index_granularity = 8192;
 
 -- 3. dm_campaign_coverage
 -- Grain: one row per (tenant, campaign, product).
--- Deliveries are product-level; the target denominator is campaign-level, so
--- each product is measured against the same campaign target population.
+-- Deliveries are product-level, the target denominator is campaign-level, so
+-- each product is measured against the same campaign target.
 CREATE TABLE IF NOT EXISTS dm_campaign_coverage (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -158,24 +126,12 @@ SETTINGS index_granularity = 8192;
 -- ==========================================================================
 -- NODE-BASED CAMPAIGN TARGET MODEL (4-7)
 --
--- Why this exists: a campaign creates one project per boundary, so targets live
--- at EVERY level of its tree. Summing them double-counts. You must take exactly
--- one cut -- the roots, or the leaves.
+-- A campaign creates one project per boundary, so targets exist at every level
+-- of its tree and summing across levels double-counts. Nothing here hardcodes a
+-- level: the discriminator is the per-row node_level, derived from the fact
+-- that the level_*_code block is dense and left-packed from the root.
 --
--- Why it can't be done with a fixed level: hierarchy depth is chosen per
--- campaign / hierarchy_type and varies (depths of 1, 3 and 6 all occur in
--- table_dumps/project_dump_1.csv). Nothing here hardcodes a level; the
--- discriminator is the per-row node_level, derived in SQL from the fact that
--- the level_*_code block is dense and left-packed from the root.
---
--- NO SURROGATE KEYS. These marts previously carried campaign_sk / hierarchy_sk
--- as deterministic cityHash64 values. They were removed: nothing ever joined on
--- them. Both facts carry (tenant_id, campaign_number, node_level, code)
--- denormalized, which is the natural key every query actually filters and joins
--- on, and dm_campaign_hierarchy (4) no longer carries a key to join TO. Leaving
--- them would have advertised a star-join that does not exist.
---
--- Join facts to each other, and to the hierarchy dim, on:
+-- NO SURROGATE KEYS. Join on the natural key:
 --     (tenant_id, campaign_number, node_level, code)
 -- ==========================================================================
 
@@ -183,43 +139,19 @@ SETTINGS index_granularity = 8192;
 -- 4. dm_campaign_hierarchy
 -- Grain: one row per LEAF boundary path, per (tenant, campaign, hierarchy_type).
 --
--- THE LOAD-BEARING PROPERTY: each row's level_one_code..level_nine_code block is
--- a complete, dense, left-packed ROOT-TO-LEAF path. Every ancestor of that leaf
--- is therefore already readable off the same row, which is why storing only the
--- leaves loses nothing -- 58 stored rows here expose 249 distinct
--- (campaign, level, code) nodes. Navigation needs no recursion, no surrogate
--- keys and no parent pointers:
+-- Each row's level block is a complete root-to-leaf path, so every ancestor is
+-- readable from it and storing only leaves loses nothing. Navigation needs no
+-- recursion or parent pointers:
 --
---     -- districts in a province:
---     SELECT DISTINCT level_three_code FROM dm_campaign_hierarchy
---     WHERE level_two_code = :province AND level_three_code != ''
+--     SELECT DISTINCT level_three_code WHERE level_two_code = :province
 --
---     -- every province in a campaign:
---     SELECT DISTINCT level_two_code FROM dm_campaign_hierarchy
---     WHERE campaign_number = :campaign AND level_two_code != ''
+-- LEAF, NOT deepest-level. A leaf is a node that is not an ancestor of any
+-- other node in the campaign. On a ragged tree -- one branch ending shallow,
+-- another running deep -- a max-level filter would discard the shallow branch
+-- entirely.
 --
--- This replaces a much wider table that carried hierarchy_sk, campaign_sk,
--- code, boundary_path, boundary_path_str, parent_code, rollup_parent_sk/code/
--- level, is_campaign_root, is_campaign_leaf and parent_in_campaign. All of it
--- was derivable from the level block or unused: its only consumer was
--- mv_dm_campaign (now retired), and hierarchy_sk was never joined on -- it is a
--- deterministic hash that dm_campaign_target_fact and dm_coverage_by_node
--- recompute identically, and those two already carry node_level + code
--- denormalized, which is what queries actually filter on.
---
--- LEAF, NOT max_level. A leaf is a node that is not an ancestor of any other
--- node in the campaign -- computed in mv_dm_campaign_hierarchy by ancestor-set
--- membership. It is NOT "the rows at the campaign's deepest level": on a ragged
--- tree (one branch stopping at level 3 while another runs to level 6) a
--- max_level filter silently discards the shallow branch and everything under it
--- becomes unaddressable. On current data every node is a leaf, so the two are
--- indistinguishable here -- which is precisely why this cannot be caught by
--- testing against this instance and has to be stated.
---
--- Target-type-AGNOSTIC: a campaign's boundary tree does not depend on
--- beneficiary type (the one project on a boundary carries both its HOUSEHOLD
--- and INDIVIDUAL target rows). Slice by target_type on
--- dm_campaign_target_fact (6) instead, which carries it.
+-- Target-type agnostic: a campaign's tree does not depend on beneficiary type.
+-- Slice by target_type on dm_targets_base (2).
 CREATE TABLE IF NOT EXISTS dm_campaign_hierarchy (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -250,62 +182,19 @@ SETTINGS index_granularity = 8192;
 
 
 -- 5. dm_campaign -- RETIRED, intentionally absent.
---
--- Held per-campaign tree shape: root_level, max_level, level_count,
--- levels_present, level_node_counts, node_count, root/leaf/orphan node counts,
--- campaign_name, project_type and the date window. It was computed entirely
--- from dm_campaign_hierarchy's root/leaf/parent flags, which item 4 above no
--- longer stores.
---
--- Dropped rather than rebuilt because NOTHING read it -- no view in 08-12, no
--- documented dashboard query. Its diagnostics were also degenerate on real
--- data: every node being simultaneously root and leaf made
--- root_node_count = leaf_node_count = node_count. Campaign dates remain
--- available on dm_targets_base (2).
---
--- Item numbers 6-22 are deliberately NOT renumbered -- 09 through 12 reference
--- them in prose. This gap is intentional.
-
--- 6. dm_campaign_target_fact -- RETIRED, intentionally absent.
---
--- Held one row per (tenant, campaign, target_type, boundary node):
--- node_level, code, is_target_type_root, is_target_type_leaf, target_population,
--- target_per_day and the campaign window.
---
--- Dropped because it was NOT DENSE ENOUGH TO FILTER. It carried node_level +
--- code -- the node's own identity -- and not one level_*_code column, so a
--- level-5 target row had no level-2 code on it. A dashboard applies its filters
--- as a CASCADE (country, then province, then district, then AP, then locality),
--- and `WHERE level_two_code = :province AND level_three_code = :district` was
--- simply not expressible against this table. Every real consumer would have had
--- to fall back to dm_targets_base (2) anyway.
---
--- Everything it held that was not derivable now lives on dm_targets_base (2),
--- which already carried target_type in its grain and all nine level codes:
---   * is_target_type_root / is_target_type_leaf  -> moved there verbatim
---   * code                                       -> derivable; it is the last
---                                                   non-empty level code
---   * everything else                            -> was already there
---
--- Its one SQL consumer, mv_dm_campaign_coverage, now reads dm_targets_base with
--- the identical predicate.
---
--- Item numbers 7-22 are deliberately NOT renumbered -- 09 through 12 reference
--- them in prose. This gap is intentional.
+-- Held per-campaign tree shape derived from the root/leaf flags that item 4 no
+-- longer stores. Nothing read it. Campaign dates live on dm_targets_base (2).
+-- Items 6-22 are deliberately not renumbered; 09-12 reference them by number.
 
 
 -- 7. dm_coverage_by_node
 -- Grain: one row per (tenant, campaign, boundary node, product, delivery date).
 --
 -- Every delivery is counted once at EVERY ancestor level of its boundary path,
--- which is what makes this a roll-up. It cannot double-count, because a given
--- delivery contributes exactly one row per level.
---
--- Daily grain so both point-in-time coverage and the cumulative-pace KPI are
--- servable from one table. The coverage RATIO is deliberately not stored: it is
--- computed at query time against dm_campaign_target_fact, joined on
--- (tenant_id, campaign_number, node_level, code), so the choice of denominator
--- cut is not frozen into storage.
+-- which is the roll-up. Daily grain, so both point-in-time coverage and
+-- cumulative pace are servable. The coverage RATIO is deliberately not stored:
+-- computed at query time against dm_targets_base, so the choice of denominator
+-- is not frozen into storage.
 CREATE TABLE IF NOT EXISTS dm_coverage_by_node (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -325,45 +214,30 @@ SETTINGS index_granularity = 8192;
 -- ==========================================================================
 -- COMPLAINTS MARTS (8-10)
 --
--- Storage for the DSS_HEALTH_COMPLAINTS panels of the
--- `provincial-health-dashboard-iccd` dashboard. The refreshable materialized
--- views that populate these three live in 09_complaints_marts.sql, which also
--- carries the full ES-to-silver field mapping, the ICCD boundary-level
--- mapping, and the per-panel query for each of the nine charts.
+-- Storage for the complaints panels. Logic, field mapping and the per-panel
+-- queries live in 09_complaints_marts.sql.
 --
--- Source: pgr_complaints_entity (silver), not project_task_entity -- these
--- share no lineage with the coverage marts in 1-7 above.
+-- Source: pgr_complaints_entity -- no lineage with the coverage marts above.
 --
--- NOTE ON project_type_id: deliberately absent. campaign_number is guaranteed
--- present from the product side, so campaign is the filter these marts model
--- on. An implementation that genuinely needs a project-type cut should ALTER
--- the mart to add the column rather than have every mart carry it.
+-- NOTE ON project_type_id: deliberately absent from every mart here and below.
+-- campaign_number is guaranteed present from the product side, so campaign is
+-- the cut these marts model on. An implementation that needs a project-type cut
+-- should ALTER that one mart rather than have every mart carry the column.
 -- ==========================================================================
 
 
 -- 8. dm_complaints_base
--- Grain: one row per (tenant, campaign, boundary path,
--- complaint type, status, event date).
+-- Grain: one row per (tenant, campaign, boundary path, complaint type, status,
+-- event date).
 --
--- The foundational complaints fact: seven of the nine panels are a GROUP BY
--- over this one table. service_code and application_status are both IN the
--- grain rather than pivoted into columns, so the by-type, by-status and
--- combined breakdowns all fall out of the same rows without a second mart
--- holding no new information.
+-- service_code and application_status are IN the grain rather than pivoted, so
+-- one table serves the by-type, by-status and combined breakdowns.
 --
--- COUNTS ONLY -- deliberately no duration measure. A resolution time is only
--- meaningful for a complaint that reached a terminal state, but this grain
--- spans every status, so such a column would be populated on rows where it
--- means nothing (PENDING_ASSIGNMENT, ASSIGNED, and whatever a richer PGR
--- workflow adds later). That is not just untidy: a reader who aggregates it
--- without remembering to filter by status gets open complaints' mere AGE
--- averaged in, which silently drags the answer down rather than producing an
--- obviously broken one. Duration lives in dm_complaints_resolution (10),
--- which cannot contain a non-terminal row at all.
---
--- event_date is task_dates, i.e. the DATE of last_modified_time -- which is
--- what dateRefField "Data.service.auditDetails.lastModifiedTime" selects in
--- every date-filtered complaints chart.
+-- COUNTS ONLY -- no duration measure. A resolution time is meaningful only for
+-- a complaint that reached a terminal state, but this grain spans every status,
+-- so such a column would be populated where it means nothing and would be
+-- averaged in by anyone who forgot to filter. Duration lives in
+-- dm_complaints_resolution (10), which cannot contain a non-terminal row.
 CREATE TABLE IF NOT EXISTS dm_complaints_base (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see header
@@ -399,21 +273,15 @@ SETTINGS index_granularity = 8192;
 
 
 -- 9. dm_complaints_open_ageing
--- Grain: one row per (tenant, campaign, boundary path, age
--- bucket). Open (PENDING_ASSIGNMENT) complaints only.
+-- Grain: one row per (tenant, campaign, boundary path, age bucket). Open
+-- complaints only.
 --
--- Why this is a separate table rather than a cut of dm_complaints_base: the
--- buckets are measured relative to WALL-CLOCK time, so a complaint moves
--- between buckets as it ages even though nothing about it changed. That
--- cannot be derived from a stored fact -- it has to be recomputed on each
--- refresh, which is exactly what this mart does.
+-- Separate from (8) because the buckets are relative to wall-clock time: a
+-- complaint moves between them as it ages even though nothing about it changed,
+-- so it must be recomputed each refresh rather than derived from a stored fact.
 --
--- AGEING BASIS. ES ages on Data.@timestamp, which is the ES *indexing* time,
--- not a domain field -- there is no silver column for it, and nothing should
--- be invented to imitate one. The KPI framework sheet defines this KPI as
--- "summary of open complaints based on time filed", so this ages on
--- created_time. refreshed_at records the instant the bucketing was computed
--- against, so a consumer can always see how stale it is (at most one hour).
+-- Ages on created_time -- "time filed", per the KPI definition. refreshed_at
+-- records the instant the bucketing was computed against.
 CREATE TABLE IF NOT EXISTS dm_complaints_open_ageing (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see header
@@ -446,33 +314,20 @@ SETTINGS index_granularity = 8192;
 
 -- 10. dm_complaints_resolution
 -- Grain: one row per (tenant, campaign, boundary path, complaint type,
--- resolution date). RESOLVED and REJECTED complaints ONLY.
+-- resolution date). RESOLVED and REJECTED only.
 --
--- Why this is its own table rather than two more columns on
--- dm_complaints_base: a duration is only meaningful once a complaint has
--- reached a terminal state, so the terminal-status filter belongs in the
--- GRAIN, not in the consumer's WHERE clause. Because a non-terminal row
--- cannot exist here at all, panel 736 is correct whether or not the caller
--- remembers to filter -- the mistake is unrepresentable instead of merely
--- documented. application_status is deliberately NOT a column: every row
--- satisfies the same predicate, so carrying it would only invite someone to
--- filter on a column that has no discriminating power left.
+-- Its own table rather than columns on (8) so the terminal-status filter lives
+-- in the GRAIN: a non-terminal row cannot exist here, which makes the metric
+-- correct whether or not the caller remembers to filter. application_status is
+-- deliberately not a column -- every row satisfies the same predicate.
 --
--- WHAT "RESOLUTION TIME" MEANS HERE. PGR has no resolved_time/closed_time
--- column -- pgr_complaints_entity carries only created_time and
--- last_modified_time -- so the duration is last_modified_time - created_time
--- for a row already in a terminal state, i.e. "time from filing to the last
--- write", which for a terminal complaint is its resolution. This is exactly
--- what the ES bucket_script on averageResolutionTimeProvinceICCD computes. It
--- is an approximation in one respect: any edit made AFTER resolution pushes
--- last_modified_time out and inflates the duration.
+-- PGR has no resolved_time, so the duration is last_modified_time -
+-- created_time for an already-terminal row. An edit made after resolution
+-- inflates it.
 --
--- The RESOLVED/REJECTED pair is a metric definition, not an oversight -- it
--- mirrors the ES chart's own `terms` filter. If a richer PGR workflow adds
--- another terminal state (CLOSED, WITHDRAWN, ...), this filter must be
--- widened deliberately; until then it fails CLOSED, undercounting rather than
--- silently averaging in complaints that never finished. Same reasoning as the
--- narrow status filter on mv_dm_successful_deliveries_base.
+-- The RESOLVED/REJECTED pair is a metric definition. If the workflow gains
+-- another terminal state it must be widened deliberately; until then it fails
+-- closed, undercounting rather than averaging in unfinished complaints.
 CREATE TABLE IF NOT EXISTS dm_complaints_resolution (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see 09 header
@@ -529,12 +384,13 @@ SETTINGS index_granularity = 8192;
 -- choice stays reviewable rather than buried in a query.
 --
 -- TARGETS ARE NOT REDEFINED HERE. Every ES target query filters
--- `exists province` + `must_not exists district`, which is exactly the ROOT
--- CUT that dm_campaign_target_fact (6) already implements per target_type as
--- is_target_type_root. All three target tiles and every coverage denominator
--- read that mart with target_type IN ('HOUSEHOLD','INDIVIDUAL','PRODUCT') --
--- no new target logic, per airflow_dags/CLAUDE.md's rule that a mart takes
--- exactly one cut and never infers a level.
+-- `exists province` + `must_not exists district` -- a LEVEL SELECTOR, meaning
+-- "rows whose deepest populated level is exactly province". Read
+-- dm_targets_base (2) with target_type IN ('HOUSEHOLD','INDIVIDUAL','PRODUCT')
+-- AND node_level = <the level the chart buckets at>, plus the parent level
+-- codes for a cascading filter. No new target logic, per
+-- airflow_dags/CLAUDE.md's rule that a mart takes exactly one cut and never
+-- infers a level.
 --
 -- No project_type_id, per the standing convention: campaign_number is
 -- guaranteed present from the product side and is the cut marts model on.
@@ -543,41 +399,28 @@ SETTINGS index_granularity = 8192;
 
 -- 11. dm_smc_administered_base
 -- Grain: one row per (tenant, campaign, boundary path, event date,
--- administration status, delivered-to, product).
+-- administration status, delivered-to, delivered flag, demographics, product).
 --
--- The core Overview fact. administration_status is IN the grain rather than
--- filtered, so one table serves the successful-administration tiles (710/714)
--- AND panel 712's refusal/ineligible slices, without a second mart holding no
--- new information.
+-- The core fact. administration_status is in the grain rather than filtered, so
+-- one table serves the successful-administration panels and the
+-- refusal/ineligible breakdowns alike.
 --
--- THE SMC DISTINCT-BENEFICIARY KEY. "Population administered" is a count of
--- DISTINCT beneficiaries, not of task rows, matching both the ES drilldowns
--- (cardinality on projectBeneficiaryClientReferenceId) and Coverage KPI 1.0
--- ("beneficiaries treated"). A beneficiary is counted once per:
+-- THE SMC DISTINCT-BENEFICIARY KEY. "Population administered" counts distinct
+-- beneficiaries, not task rows:
 --
 --     (campaign_number, cycleIndex, project_beneficiary_client_reference_id,
 --      administration_status)
 --
--- so the same id appearing twice with the same cycle, campaign and status
--- counts ONCE. On current data: 7,105 task rows -> 4,559 distinct ids ->
--- 4,569 under this key.
+-- cycleIndex is in the key because SMC runs in cycles and the same beneficiary
+-- should receive a task in every cycle; without it those genuine repeat
+-- treatments collapse into one and undercount. This is SMC-specific -- a
+-- campaign type that does not run in cycles needs the key revisited.
 --
--- cycleIndex IS IN THE KEY BECAUSE THIS IS AN SMC MART. SMC runs in multiple
--- cycles and the same beneficiary should legitimately receive a task in EVERY
--- cycle; leaving cycle out of the key would collapse those genuine repeat
--- treatments into one and undercount coverage. This is SMC-specific -- a
--- campaign type that does not run in cycles needs this key revisited before
--- these marts are reused for it.
---
--- WHY AN AGGREGATE STATE, NOT A UInt64. A distinct count is NOT additive. The
--- dashboard filters by province, drills district -> AP -> locality -> village,
--- and sums over date ranges; a stored integer would over-count every
--- beneficiary who appears in two cells on every one of those roll-ups.
--- uniqExactState defers the dedup to read time, so uniqExactMerge is correct
--- at any level. uniqExact (not uniq) because it is exact and the state is the
--- same order of size as the source; if volume ever makes that costly, uniq
--- (HyperLogLog, ~0.5% error) is a drop-in swap on both the State and Merge
--- sides. Note `cycleIndex` is camelCase in ClickHouse and needs backticks.
+-- STORED AS AN AGGREGATE STATE, not an integer, because a distinct count is not
+-- additive: the dashboard filters by province, drills down, and sums over date
+-- ranges, and a stored count would double-count anyone appearing in two cells.
+-- uniqExactMerge is correct at any level; swap uniqExact for uniq if the volume
+-- ever makes exactness costly.
 CREATE TABLE IF NOT EXISTS dm_smc_administered_base (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see 10's header
@@ -599,9 +442,8 @@ CREATE TABLE IF NOT EXISTS dm_smc_administered_base (
     delivered_to                LowCardinality(String), -- Data.deliveredTo: INDIVIDUAL / HOUSEHOLD / '' -- panel 714 filters INDIVIDUAL
     -- Data.isDelivered. NOT redundant with delivered_to, which names the
     -- RECIPIENT TYPE while this records whether the delivery actually
-    -- happened: 3,459 rows are delivered_to='INDIVIDUAL' with
-    -- is_delivered=false. Viz 722's StockStatus filters on this one, so using
-    -- delivered_to as a proxy would be wrong.
+    -- happened. A row can name an INDIVIDUAL recipient and still be
+    -- undelivered, so delivered_to is not a proxy for this.
     is_delivered                Bool,
     -- Beneficiary demographics, added for the Registration/Administration and
     -- Specific-KPIs tabs. gender is enumerated MALE/FEMALE/OTHER/'' in silver;
@@ -622,9 +464,14 @@ CREATE TABLE IF NOT EXISTS dm_smc_administered_base (
     cycle_index                 UInt8,
     product_name                String,                 -- a single SKU; one task delivering two products contributes two rows
 
-    -- Distinct beneficiaries under the SMC key above. Read with
-    -- uniqExactMerge(administered_uniq) -- NEVER sum() this column.
+    -- Aggregate STATE, not a number: a raw SELECT shows a binary blob, which is
+    -- expected. Roll it up with uniqExactMerge() -- correct at any level,
+    -- because a distinct count is not additive and summing per-cell counts
+    -- double-counts anything appearing in two cells. The plain column beside it
+    -- is the same measure for THIS ROW ONLY, so the table is readable without
+    -- losing the correct path.
     administered_uniq           AggregateFunction(uniqExact, String, UInt8, String, String),
+    administered_count          UInt64,                 -- distinct beneficiaries in THIS row; do not SUM across rows
     task_rows                   UInt64,                 -- raw task-resource row count; additive, and what dm_successful_deliveries_base counts
     resource_quantity_sum       Int64,                  -- sum(quantity): doses/resources, the "total_administered_resources" tile (711)
 
@@ -638,69 +485,33 @@ ORDER BY (tenant_id, campaign_number, event_date, administration_status, product
 SETTINGS index_granularity = 8192;
 
 
--- 12. dm_smc_household_visited
--- Grain: one row per (tenant, campaign, boundary path, event date).
--- Serves panel 709's numerator ("total_households_visited" in the ES summary
--- index, which has no definition in any repo).
+-- 12. dm_smc_household_visited -- RETIRED, intentionally absent.
 --
--- Definition from Coverage KPI 4.0, Household Visit Rate: "unique households
--- visited (with at least one beneficiary assessed)". Numerator is therefore
--- distinct project_task_entity.household_id; the denominator is
--- dm_campaign_target_fact with target_type = 'HOUSEHOLD' AND
--- is_target_type_root -- target rows that already exist and are currently
--- unused, because mv_dm_campaign_coverage hard-filters to INDIVIDUAL.
+-- Held distinct households visited per (campaign, boundary path, date). It was
+-- sourced from project_task_entity, which was wrong: households visited comes
+-- from the household registry, not from the task feed.
 --
--- DELIBERATE ASYMMETRY WITH 11, FLAGGED FOR REVIEW: this key has NO cycle
--- component, because KPI 4.0 says "visited AT LEAST ONCE during the campaign"
--- -- a household visited in three cycles is one visited household, whereas a
--- beneficiary treated in three cycles is three treatments. That is the
--- intended reading of the KPI, but it is the one place the SMC cycle rule in
--- 11 is not applied, so it is called out here rather than left implicit. If
--- households should also be counted per-cycle, add `cycleIndex` to the
--- uniqExactState below and this comment goes away.
-CREATE TABLE IF NOT EXISTS dm_smc_household_visited (
-    tenant_id                   LowCardinality(String),
-    campaign_number             LowCardinality(String),
-    hierarchy_type              LowCardinality(String),
-
-    -- Flattened Boundary Hierarchy Fields
-    level_one_code                      LowCardinality(String),
-    level_two_code                      LowCardinality(String),
-    level_three_code                    LowCardinality(String),
-    level_four_code                     LowCardinality(String),
-    level_five_code                     LowCardinality(String),
-    level_six_code                      LowCardinality(String),
-    level_seven_code                    LowCardinality(String),
-    level_eight_code                    LowCardinality(String),
-    level_nine_code                     LowCardinality(String),
-
-    event_date                  Date32,
-
-    -- Distinct households. Read with uniqExactMerge -- never sum().
-    households_uniq             AggregateFunction(uniqExact, String),
-    task_rows                   UInt64,                 -- tasks contributing; additive, makes the dedup ratio visible
-
-    INDEX idx_dm_shv_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
-)
-ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, event_date)
-SETTINGS index_granularity = 8192;
+-- Once corrected to that source it was a pure aggregation of
+-- dm_household_registry (20), which already reads household_entity at HOUSEHOLD
+-- grain -- so one row there IS one household and count() is already the
+-- distinct count, with no aggregate state required:
+--
+--     SELECT count() FROM dm_household_registry
+--     WHERE level_two_code = :province AND event_date BETWEEN :from AND :to
+--
+-- Items 13-22 are deliberately not renumbered; 09-12 reference them by number.
 
 
 -- 13. dm_smc_adverse_events
 -- Grain: one row per (tenant, campaign, boundary path, event date, kind).
 --
--- Two of panel 712's four donut slices. The ES config synthesises them with
--- constant-script terms aggs ("'SideEffect'" / "'Referral'") over two separate
--- indexes -- there is no shared "reason" field anywhere; the slice label IS
--- the aggregation name. This mart makes that explicit as an event_kind
--- dimension over a UNION ALL of the two silver entities.
+-- Side effects and referrals, unioned with an event_kind dimension. They come
+-- from separate entities and have no shared "reason" field; the kind IS the
+-- distinction.
 --
--- The other two slices (Beneficiary Refused, Total Ineligible) are NOT here:
--- they are beneficiary counts, not event counts, and fall out of
--- dm_smc_administered_base by administration_status. Splitting them that way
--- keeps "distinct people" and "document count" from being summed together by
--- accident.
+-- Refusals and ineligibles are NOT here: they are beneficiary counts, not event
+-- counts, and fall out of (11) by administration_status. Keeping them apart
+-- stops "distinct people" and "document count" being summed together.
 CREATE TABLE IF NOT EXISTS dm_smc_adverse_events (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -730,23 +541,14 @@ SETTINGS index_granularity = 8192;
 
 -- 14. dm_stock_balance
 -- Grain: one row per (tenant, campaign, boundary path, product).
--- Serves panel 715, "days inventory can last".
 --
--- COMPONENTS, NOT THE RATIO -- deliberate. The ES chart computes
--- (RECEIVED - DISPATCHED) / sum(targetPerDay) per district via action:
--- "division" across two separate index queries. Storing the quotient here
--- would be wrong: the dashboard's province filter re-aggregates, and a ratio
--- cannot be re-aggregated. Consumers divide at read time against
--- dm_campaign_target_fact (target_type = 'PRODUCT' AND is_target_type_root):
+-- COMPONENTS, NOT THE RATIO. Days-of-stock is (received - dispatched) / daily
+-- consumption, but a ratio cannot be re-aggregated and the dashboard's province
+-- filter re-aggregates. Consumers divide at read time against dm_targets_base.
 --
---     sum(net_on_hand) / nullIf(sum(target_per_day), 0)
---
--- net_on_hand IS DELIBERATELY NOT CLAMPED AT ZERO. On the current instance
--- DISPATCHED (1.06bn units) is roughly 7x RECEIVED (150m), so balances come
--- out strongly negative. That is a real data problem -- an incomplete receipt
--- feed, most likely -- and flooring it at 0 would render a plausible-looking
--- dashboard over broken data. A negative balance should be visible and
--- investigated, not smoothed away.
+-- net_on_hand is NOT clamped at zero. A negative balance means the receipt feed
+-- is incomplete; flooring it would render a plausible dashboard over broken
+-- data.
 CREATE TABLE IF NOT EXISTS dm_stock_balance (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -815,30 +617,19 @@ SETTINGS index_granularity = 8192;
 -- Grain: one row per (tenant, campaign, boundary path, product, facility,
 -- event type, reason).
 --
--- The workhorse of this tab: panels 721, 723 and four of viz 722's six charts
--- are all GROUP BYs over this one table.
+-- WHY reason IS IN THE GRAIN. The transaction breakdown splits stock movement
+-- into series that are each an (event_type, reason) PAIR -- received, issued,
+-- returned, lost, damaged -- which dm_stock_balance (14) cannot answer because
+-- it aggregates reason away.
 --
--- WHY reason IS IN THE GRAIN. Panel 721 breaks stock movement into five series
--- that are each an (event_type, reason) PAIR, not an event_type alone:
---     StockReceived  = RECEIVED   + reason 'RECEIVED'
---     StockIssued    = DISPATCHED + reason ''            (ES: must_not exists)
---     StockReturned  = RECEIVED   + reason 'RETURNED'
---     StockLost      = DISPATCHED + reason IN ('LOST_IN_TRANSIT','LOST_IN_STORAGE')
---     StockDamaged   = DISPATCHED + reason IN ('DAMAGED_IN_TRANSIT','DAMAGED_IN_STORAGE')
--- dm_stock_balance cannot answer any of these -- it aggregates reason away.
+-- Those series do not partition the data: rows with an unrecognised reason land
+-- in no named series while still counting toward stock in hand. That is
+-- faithful to the source definition, not a gap here.
 --
--- NOTE the five series do NOT partition the data: on current data 98 rows
--- (109,508 units) are RECEIVED with a blank reason, so they land in no named
--- series while still counting toward Stock in Hand. That is faithful to the ES
--- config, which has the same hole; it is not a bug in this mart.
---
--- TWO COMPETING BALANCE FORMULAS, both derivable from this grain:
---     dashboard:     RECEIVED - DISPATCHED                         (what 14 stores)
---     KPI framework: Received + Returned(Unused) - Issued          (Existing-KPI, Inventory page)
--- They differ by ~100M units on current data because RECEIVED/RETURNED alone
--- is 100,006,932. Neither is materialized here -- both are one-line read-time
--- expressions over these rows, and picking one in storage would bury a
--- metric-definition decision inside a mart.
+-- TWO COMPETING BALANCE FORMULAS, both derivable from this grain and neither
+-- materialized, because picking one in storage would bury a metric decision:
+--     dashboard:     received - dispatched
+--     KPI framework: received + returned(unused) - issued
 CREATE TABLE IF NOT EXISTS dm_stock_transactions (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see 11's header
@@ -878,28 +669,17 @@ SETTINGS index_granularity = 8192;
 
 -- 16. dm_stock_facility_points
 -- Grain: one row per (tenant, campaign, boundary path, facility).
--- Serves viz 722's map-points chart.
 --
--- WHERE THE COORDINATES COME FROM. There is no facility master in silver at
--- all -- no facility_entity, and bronze stg_facility carries an address_id but
--- no lat/long of its own. The ES chart reads Data.additionalDetails.lat/.lng,
--- which is the SAME free-form JSON blob that lands in
--- stock_entity.additional_details, so the coordinates are extracted from there
--- with JSONExtractFloat. This is not a workaround for a missing join: it is
--- exactly the field the dashboard reads today.
+-- There is no facility master in silver; the coordinates come from the stock
+-- record's own additional_details JSON, which is the same field the map reads.
 --
--- FACILITY GRAIN ONLY, and that is a data fact rather than a preference. The
--- ES points chart issues TWO queries -- one bucketed by district, one by
--- facility name. On current data 651 stock rows carry lat/lng and ZERO of them
--- also carry a district code, so the district-grain variant produces nothing
--- whatsoever. Only the facility grain (33 facilities) yields points, so that
--- is what is modeled. If boundary resolution improves for coordinate-bearing
--- rows, the district roll-up is a GROUP BY over this same table.
+-- FACILITY GRAIN ONLY. Coordinate-bearing rows do not reliably carry a resolved
+-- boundary, so a district-grain variant has nothing to group by. If boundary
+-- resolution improves, a district roll-up is a GROUP BY over this table.
 --
--- latitude/longitude are MEANS over the facility's stock rows, matching the ES
--- `avg` aggregations. For a fixed warehouse every row should carry the same
--- coordinate, so the mean is a de-duplication rather than a real average; a
--- facility whose rows disagree will silently land between them.
+-- latitude/longitude are MEANS over the facility's rows. For a fixed warehouse
+-- every row should carry the same coordinate, so this de-duplicates rather than
+-- averages; a facility whose rows disagree lands between them.
 CREATE TABLE IF NOT EXISTS dm_stock_facility_points (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -933,27 +713,15 @@ SETTINGS index_granularity = 8192;
 
 -- 17. dm_stock_reconciliation
 -- Grain: one row per (tenant, campaign, boundary path, facility, product).
--- Serves the "manual stock" half of panel 720.
 --
--- LATEST PER FACILITY, NOT A SUM -- this deliberately DIVERGES from the ES
--- config, which has a latent double-count. That aggregation builds a
--- `top_hits` sub-agg named `latest` (size 1, sorted by lastModifiedTime desc)
--- per facility, and then never reads it: the enclosing `sum_bucket` sums
--- `sum_calculatedCount`, which is a plain sum over EVERY reconciliation
--- document for that facility. So a facility reconciled three times contributes
--- three physical counts to its district total. The unused `top_hits` makes the
--- intent unambiguous -- a physical stock count is a snapshot, not something
--- you add up -- so this mart takes argMax on the client audit timestamp.
--- reconciliation_count is kept precisely so the size of that divergence stays
--- measurable rather than invisible.
+-- LATEST PER FACILITY, NOT A SUM. A physical stock count is a snapshot, not
+-- something to add up -- a facility reconciled three times must contribute its
+-- most recent count once, not three counts. reconciliation_count keeps the
+-- collapse visible.
 --
--- (The ES agg is also misnamed: `sum_calculatedCount` sums
--- Data.stockReconciliation.physicalCount, not calculatedCount.)
---
--- calculated_count is carried even though no chart on this tab reads it:
--- Stock KPI 10.0, "Stock Balance Accuracy (Physical vs System)", is exactly
--- abs(physical_count - calculated_count) / calculated_count * 100, and at this
--- grain it costs one more argMax.
+-- calculated_count is carried although no chart reads it: stock balance
+-- accuracy is |physical - calculated| / calculated, and at this grain it costs
+-- one more argMax.
 CREATE TABLE IF NOT EXISTS dm_stock_reconciliation (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -988,34 +756,20 @@ SETTINGS index_granularity = 8192;
 
 -- 18. dm_user_sync
 -- Grain: one row per (tenant, campaign, boundary path, role).
--- Serves panel 717's warehouse-manager sync rate.
 --
--- WHY stock_entity IS THE SYNC SIGNAL. The ES chart reads user-sync-index-v1
--- for its numerator, and there is no such entity in silver. There does not
--- need to be: the upstream pipeline wrote one record to the stock index and
--- one to the user-sync index for the same underlying event, so a user
--- appearing in stock_entity IS a user who synced. The original table is used
--- directly rather than reconstructing a parallel sync feed.
+-- A user appearing in a record table IS a user who synced -- the upstream
+-- pipeline wrote a domain record and a sync record for the same event, so the
+-- record tables are the sync signal.
 --
--- role IS A GRAIN COLUMN, NOT A FILTER. The chart only asks about
--- WAREHOUSE_MANAGER, but the same shape answers the KPI framework's CDD and
--- supervisor sync rows (Existing-KPI `Sync` page, rows 81-89) for free, and a
--- filter baked into the mart would have forced a second near-identical table.
+-- role IS A GRAIN COLUMN, NOT A FILTER, so one mart answers the sync rate for
+-- warehouse managers, distributors and supervisors alike.
 --
--- AGGREGATE STATES, NOT COUNTS -- same reasoning as the SMC beneficiary key on
--- mart 11. A user active in two districts is one user; a stored integer would
--- be double-counted by every roll-up to province. uniqExactMerge at read time
--- is correct at any level.
+-- Aggregate states rather than counts, for the same additivity reason as (11).
 --
--- THE TWO SIDES ARE KEYED DIFFERENTLY, and this cannot be fixed here:
---   denominator -> project_staff_entity.user_id   (the campaign's staff roster)
---   numerator   -> stock_entity.user_name         (stock_entity has NO user_id column at all)
--- So the rate is a ratio of two independently-counted populations, not a
--- per-user matched cohort; no user-level "did this person sync" join is
--- possible until stock_entity carries a user id. Note also that
--- egov_api_utils._get_staff_role collapses a multi-role user to their
--- highest-ranked role only, so someone who is both a warehouse manager and
--- something more senior will not appear under WAREHOUSE_MANAGER at all.
+-- THE TWO SIDES ARE KEYED DIFFERENTLY and this cannot be fixed here: the
+-- denominator counts staff user ids, the numerator counts user NAMES, because
+-- the record tables carry no user id. The rate is a ratio of two independently
+-- counted populations, not a matched per-user cohort.
 CREATE TABLE IF NOT EXISTS dm_user_sync (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -1034,9 +788,16 @@ CREATE TABLE IF NOT EXISTS dm_user_sync (
 
     role                        LowCardinality(String), -- WAREHOUSE_MANAGER / DISTRIBUTOR / DISTRICT_SUPERVISOR / ...
 
-    -- Read with uniqExactMerge -- never sum(). See the note above.
-    users_created_uniq          AggregateFunction(uniqExact, String), -- project_staff_entity.user_id
-    users_synced_uniq           AggregateFunction(uniqExact, String), -- stock_entity.user_name
+    -- Aggregate STATE, not a number: a raw SELECT shows a binary blob, which is
+    -- expected. Roll it up with uniqExactMerge() -- correct at any level,
+    -- because a distinct count is not additive and summing per-cell counts
+    -- double-counts anything appearing in two cells. The plain column beside it
+    -- is the same measure for THIS ROW ONLY, so the table is readable without
+    -- losing the correct path.
+    users_created_uniq          AggregateFunction(uniqExact, String), -- staff user ids
+    users_synced_uniq           AggregateFunction(uniqExact, String), -- record-table user names
+    users_created_count         UInt64,                 -- distinct users in THIS row; do not SUM across rows
+    users_synced_count          UInt64,                 -- distinct users in THIS row; do not SUM across rows
 
     INDEX idx_dm_us_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
@@ -1081,30 +842,15 @@ SETTINGS index_granularity = 8192;
 
 -- 19. dm_attendance
 -- Grain: one row per (tenant, campaign, boundary path, event date, individual).
--- Serves viz 782 (FLW attendance) and the attendance half of viz 783.
 --
--- PRESENCE IS AN EXIT LOG. The ES charts filter
--- attendanceLog.type = 'EXIT' AND attendanceLog.status = 'ACTIVE' -- presence
--- is inferred from someone clocking OUT, not in. That is the source's
--- convention, not an oversight, and it is preserved here.
+-- PRESENCE IS AN EXIT LOG -- presence is inferred from clocking OUT, which is
+-- the source's convention.
 --
--- Individual grain, one row per person per day, is deliberate: every consumer
--- of this mart wants "distinct people present", and the ES version computes
--- that with a terms agg on individualId that carries NO `size` -- silently
--- truncating to 10 individuals per day per boundary. Keeping the individual in
--- the grain makes the distinct count exact and the truncation unreproducible.
+-- Individual grain because every consumer wants distinct people present, and
+-- keeping the individual in the grain makes that count exact.
 --
--- ON THIS INSTANCE THIS MART IS EMPTY, and correctly so: all 10 rows in
--- attendance_log_entity are type='ENTRY'; not one is 'EXIT'. The ES charts
--- would render zero against the same data. Do not "fix" this by widening the
--- filter to ENTRY -- that would silently change the metric from "clocked out"
--- to "clocked in" and make this instance's numbers incomparable with any
--- deployment that has real exit logs.
---
--- NOTE the ES per-day average divides by `per_day._bucket_count`, i.e. only
--- days that HAD logs. A boundary that reported on 1 of 10 campaign days scores
--- as if it were fully staffed. That denominator choice is left to the consumer
--- rather than baked in.
+-- A per-day average over only the days that HAD logs flatters a boundary that
+-- reported rarely; that denominator choice is left to the consumer.
 CREATE TABLE IF NOT EXISTS dm_attendance (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -1134,15 +880,10 @@ SETTINGS index_granularity = 8192;
 
 -- 20. dm_household_registry
 -- Grain: one row per (tenant, campaign, boundary path, household).
--- Serves viz 789 (households with >20 members) and the household-registry
--- columns of viz 794.
 --
--- member_count is carried per household rather than pre-filtered to >20, so the
--- threshold stays a read-time predicate. The ES chart uses `gt: 20` -- strictly
--- greater, so a household of exactly 20 is NOT counted despite the label
--- "more than twenty members" (which is, to be fair, correct English for it).
--- Keeping the raw count also makes the KPI framework's other household-size
--- questions answerable from the same rows.
+-- member_count is carried raw rather than pre-filtered, so the
+-- oversized-household threshold stays a read-time predicate and the same rows
+-- serve as the registered-household denominator.
 CREATE TABLE IF NOT EXISTS dm_household_registry (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -1171,23 +912,12 @@ SETTINGS index_granularity = 8192;
 
 -- 21. dm_referral_summary
 -- Grain: one row per (tenant, campaign, boundary path, event date, source).
--- Serves viz 802 and 803.
 --
--- TWO SOURCES, TWO DIFFERENT COUNTING RULES, kept as separate measures rather
--- than one column with a source dimension, because they are NOT the same unit:
---   referred_children_uniq -- referral_entity, DISTINCT beneficiaries
---                             (ES: cardinality on the beneficiary ref id)
---   hf_referral_records    -- hf_referral_entity, RECORD COUNT
---                             (ES: value_count on the hfReferral id)
--- The ES chart divides the second by the first to get "% children present at
--- health facility". That ratio divides a record count by a distinct-child
--- count, so one child attending twice pushes it ABOVE 100%. The two measures
--- are stored separately and unreconciled precisely so that asymmetry stays
--- visible to whoever writes the ratio, instead of being frozen into a column.
---
--- Note the tab is called REFERRAL_AND_SIDE_EFFECTS but neither of its two viz
--- queries the side-effect index at all -- side effects live only on the
--- Overview tab's panel 712 (dm_smc_adverse_events, 13).
+-- TWO SOURCES, TWO COUNTING RULES, kept as separate measures because they are
+-- not the same unit: field referrals are counted as DISTINCT beneficiaries,
+-- health-facility referrals as RECORDS. Dividing the second by the first can
+-- therefore exceed 100% when one child attends twice. They are stored
+-- unreconciled so that asymmetry stays visible to whoever writes the ratio.
 CREATE TABLE IF NOT EXISTS dm_referral_summary (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -1205,8 +935,14 @@ CREATE TABLE IF NOT EXISTS dm_referral_summary (
 
     event_date                  Date32,
 
-    -- Distinct children referred by field teams. Read with uniqExactMerge.
+    -- Aggregate STATE, not a number: a raw SELECT shows a binary blob, which is
+    -- expected. Roll it up with uniqExactMerge() -- correct at any level,
+    -- because a distinct count is not additive and summing per-cell counts
+    -- double-counts anything appearing in two cells. The plain column beside it
+    -- is the same measure for THIS ROW ONLY, so the table is readable without
+    -- losing the correct path.
     referred_children_uniq      AggregateFunction(uniqExact, String),
+    referred_children_count     UInt64,                 -- distinct children in THIS row; do not SUM across rows
     hf_referral_records         UInt64,                 -- health-facility referral RECORDS, not distinct children
 
     INDEX idx_dm_ref_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
@@ -1218,27 +954,17 @@ SETTINGS index_granularity = 8192;
 
 -- 22. dm_suspected_fraud
 -- Grain: one row per (tenant, campaign, boundary path, user, minute).
--- Serves viz 793 and the fraud column of viz 794.
 --
--- WHAT "SUSPECTED FRAUD" MEANS. There is no fraud flag in any source. The ES
--- chart is a THROUGHPUT HEURISTIC: a user is suspect if there exists at least
--- one wall-clock minute in which they recorded 4 or more successful individual
--- administrations. This mart stores the offending (user, minute) buckets that
--- clear that bar; the per-boundary chart counts DISTINCT USERS over them, and
--- the distributor-level drill counts the BUCKETS themselves -- two different
--- numbers the ES config computes from the same shape, both derivable here.
+-- A THROUGHPUT HEURISTIC, not a fraud flag -- no source carries one. A user is
+-- suspect if some wall-clock minute holds an implausible number of successful
+-- administrations. This stores the offending (user, minute) buckets; counting
+-- the users and counting the buckets are both derivable.
 --
--- The threshold is a metric definition, not a constant of nature: min_doc_count
--- 4 appears three times in the ES agg (boundary, user, minute). Only the minute
--- one is semantically meaningful and it is the one reproduced. Widening or
--- narrowing it is a product decision.
+-- The threshold is a metric definition, not a constant of nature.
 --
--- CLOCK CAVEAT: the ES version filters on Data.createdTime but buckets minutes
--- on Data.@timestamp -- the ES ingest clock, which is not a domain field and
--- has no silver equivalent. This uses created_time for both, so a burst is
--- measured against when the device recorded the work rather than when the
--- pipeline happened to index it. That is the more defensible clock, and on a
--- backfilled load it is the only one that means anything at all.
+-- Buckets on the device clock rather than an ingest timestamp, so a burst is
+-- measured against when the work was recorded -- the only clock that means
+-- anything on a backfilled load.
 CREATE TABLE IF NOT EXISTS dm_suspected_fraud (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
