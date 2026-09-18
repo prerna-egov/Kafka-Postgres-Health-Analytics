@@ -781,8 +781,8 @@ CREATE TABLE IF NOT EXISTS analytics.dm_user_sync
 (
     tenant_id            LowCardinality(String),
     campaign_number      LowCardinality(String),
-    hierarchy_type       LowCardinality(String),
 
+    hierarchy_type       LowCardinality(String),
     level_one_code       LowCardinality(String),
     level_two_code       LowCardinality(String),
     level_three_code     LowCardinality(String),
@@ -794,12 +794,17 @@ CREATE TABLE IF NOT EXISTS analytics.dm_user_sync
     level_nine_code      LowCardinality(String),
 
     role                 LowCardinality(String),
-    src                  LowCardinality(String),   -- 'CREATED' | 'SYNCED'
-    user_key             String,                   -- user_id on CREATED, user_name on SYNCED
-    records              UInt64                    -- source rows behind this cell
+
+    src                  LowCardinality(String),   -- CREATED | SYNCED
+
+    user_id              String,   -- roster uuid; '' on SYNCED (record tables carry no user id)
+    user_name            String,   -- present on BOTH legs: the key that joins them
+    name_of_user         String,   -- blank on many SYNCED rows; CREATED is authoritative
+
+    records              UInt64
 )
 ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, role, src, level_two_code, level_three_code, user_key)
+ORDER BY (tenant_id, campaign_number, role, src, level_two_code, level_three_code, user_name)
 SETTINGS index_granularity = 8192;
 
 
@@ -829,38 +834,6 @@ ORDER BY (tenant_id, campaign_number, role, synced_hour, hierarchy_type,
           level_one_code, level_two_code, level_three_code, user_name)
 SETTINGS index_granularity = 8192;
 
-
--- total_records_synced is safe PER ROW and per facility, not as a grand total:
--- a CDD holding two project assignments at different boundary paths yields two
--- rows, each carrying their full record count, because the records themselves
--- have no boundary to split on (fact-table boundaries are ~100% blank).
-CREATE TABLE IF NOT EXISTS analytics.dm_cdd_sync_facility
-(
-    tenant_id             LowCardinality(String),
-    campaign_number       LowCardinality(String),
-    hierarchy_type        LowCardinality(String),
-
-    level_one_code        LowCardinality(String),
-    level_two_code        LowCardinality(String),
-    level_three_code      LowCardinality(String),
-    level_four_code       LowCardinality(String),
-    level_five_code       LowCardinality(String),
-    level_six_code        LowCardinality(String),
-    level_seven_code      LowCardinality(String),
-    level_eight_code      LowCardinality(String),
-    level_nine_code       LowCardinality(String),
-
-    user_id               String,
-    user_name             String,
-    cdd_name              String,
-
-    total_records_synced  UInt64
-)
-ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, hierarchy_type,
-          level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-          level_six_code, level_seven_code, level_eight_code, level_nine_code, user_id)
-SETTINGS index_granularity = 8192;
 
 
 -- ==========================================================================

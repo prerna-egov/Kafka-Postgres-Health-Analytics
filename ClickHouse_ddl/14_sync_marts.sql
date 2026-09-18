@@ -21,15 +21,25 @@ SELECT
     level_six_code, level_seven_code, level_eight_code, level_nine_code,
     role,
     src,
-    user_key,
+    user_id,
+    user_name,
+    name_of_user,
     toUInt64(count()) AS records
 FROM
 (
-    /* CREATED -- the staff roster */
-    SELECT tenant_id, toString(campaign_number) AS campaign_number, hierarchy_type,
-           level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-           level_six_code, level_seven_code, level_eight_code, level_nine_code,
-           toString(role) AS role, 'CREATED' AS src, toString(user_id) AS user_key
+    /* CREATED -- the staff roster. Carries BOTH user_id and user_name, so
+       user_name is the key that joins this leg to the SYNCED legs. */
+    SELECT
+        tenant_id,
+        toString(campaign_number) AS campaign_number,
+        hierarchy_type,
+        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
+        level_six_code, level_seven_code, level_eight_code, level_nine_code,
+        toString(role) AS role,
+        'CREATED' AS src,
+        toString(user_id)      AS user_id,
+        toString(user_name)    AS user_name,
+        toString(name_of_user) AS name_of_user
     FROM analytics.project_staff_entity FINAL
     WHERE user_id != ''
       AND role IN ('DISTRIBUTOR','WAREHOUSE_MANAGER','NATIONAL_SUPERVISOR',
@@ -37,45 +47,73 @@ FROM
 
     UNION ALL
     /* SYNCED -- household */
-    SELECT tenant_id, toString(campaign_number), hierarchy_type,
-           level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-           level_six_code, level_seven_code, level_eight_code, level_nine_code,
-           toString(role), 'SYNCED', toString(user_name)
+    SELECT
+        tenant_id,
+        toString(campaign_number) AS campaign_number,
+        hierarchy_type,
+        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
+        level_six_code, level_seven_code, level_eight_code, level_nine_code,
+        toString(role) AS role,
+        'SYNCED' AS src,
+        '' AS user_id,
+        toString(user_name)    AS user_name,
+        toString(name_of_user) AS name_of_user
     FROM analytics.household_entity FINAL
-    WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
+    WHERE user_name != ''
 
     UNION ALL
-    /* SYNCED -- household member */
-    SELECT tenant_id, toString(campaign_number), hierarchy_type,
-           level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-           level_six_code, level_seven_code, level_eight_code, level_nine_code,
-           toString(role), 'SYNCED', toString(user_name)
+    /* SYNCED -- household_member */
+    SELECT
+        tenant_id,
+        toString(campaign_number) AS campaign_number,
+        hierarchy_type,
+        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
+        level_six_code, level_seven_code, level_eight_code, level_nine_code,
+        toString(role) AS role,
+        'SYNCED' AS src,
+        '' AS user_id,
+        toString(user_name)    AS user_name,
+        toString(name_of_user) AS name_of_user
     FROM analytics.household_member_entity FINAL
-    WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
+    WHERE user_name != ''
 
     UNION ALL
-    /* SYNCED -- project task */
-    SELECT tenant_id, toString(campaign_number), hierarchy_type,
-           level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-           level_six_code, level_seven_code, level_eight_code, level_nine_code,
-           toString(role), 'SYNCED', toString(user_name)
+    /* SYNCED -- project_task */
+    SELECT
+        tenant_id,
+        toString(campaign_number) AS campaign_number,
+        hierarchy_type,
+        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
+        level_six_code, level_seven_code, level_eight_code, level_nine_code,
+        toString(role) AS role,
+        'SYNCED' AS src,
+        '' AS user_id,
+        toString(user_name)    AS user_name,
+        toString(name_of_user) AS name_of_user
     FROM analytics.project_task_entity FINAL
-    WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
+    WHERE user_name != ''
 
     UNION ALL
     /* SYNCED -- stock */
-    SELECT tenant_id, toString(campaign_number), hierarchy_type,
-           level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-           level_six_code, level_seven_code, level_eight_code, level_nine_code,
-           toString(role), 'SYNCED', toString(user_name)
+    SELECT
+        tenant_id,
+        toString(campaign_number) AS campaign_number,
+        hierarchy_type,
+        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
+        level_six_code, level_seven_code, level_eight_code, level_nine_code,
+        toString(role) AS role,
+        'SYNCED' AS src,
+        '' AS user_id,
+        toString(user_name)    AS user_name,
+        toString(name_of_user) AS name_of_user
     FROM analytics.stock_entity FINAL
-    WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
+    WHERE user_name != ''
 )
 GROUP BY
     tenant_id, campaign_number, hierarchy_type,
     level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
     level_six_code, level_seven_code, level_eight_code, level_nine_code,
-    role, src, user_key;
+    role, src, user_id, user_name, name_of_user;
 
 
 -- 2. mv_dm_cdd_sync_hourly -> dm_cdd_sync_hourly    (KPI 10)
@@ -134,82 +172,3 @@ GROUP BY
     level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
     level_six_code, level_seven_code, level_eight_code, level_nine_code,
     role, synced_hour, user_name;
-
-
--- 3. mv_dm_cdd_sync_facility -> dm_cdd_sync_facility  (KPI 11)
---
--- The ONE accepted join: "show CDDs who synced 0 records" requires the roster
--- as the outer side, so a LEFT JOIN is structural, not incidental.
---
--- Joined on tenant_id + user key ONLY. Adding campaign_id/project_id to the
--- predicate collapsed the result to 1 CDD with records out of 114,923, because
--- project_id is blank on ~76% of household rows while never blank on staff.
---
--- roster_base is DISTINCT before the key expansion: without it, a CDD holding
--- two identical assignments would be counted through both legs and their record
--- total would double.
---
--- The roster is expanded to BOTH user_name and user_id because the record
--- tables' user_name sometimes holds a raw user uuid (userService failed to
--- resolve and left createdBy in place), so one spelling alone loses those rows.
-CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_dm_cdd_sync_facility
-REFRESH EVERY 1 HOUR
-TO analytics.dm_cdd_sync_facility
-EMPTY AS
-WITH sync_by_user AS
-(
-    SELECT tenant_id, toString(user_name) AS k, toUInt64(count()) AS records
-    FROM
-    (
-        SELECT tenant_id, user_name FROM analytics.household_entity FINAL
-            WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
-        UNION ALL
-        SELECT tenant_id, user_name FROM analytics.household_member_entity FINAL
-            WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
-        UNION ALL
-        SELECT tenant_id, user_name FROM analytics.project_task_entity FINAL
-            WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
-        UNION ALL
-        SELECT tenant_id, user_name FROM analytics.stock_entity FINAL
-            WHERE user_name != '' AND synced_time_stamp > toDateTime64(0, 3)
-    )
-    GROUP BY tenant_id, k
-),
-roster_base AS
-(
-    SELECT DISTINCT
-        tenant_id,
-        toString(campaign_number) AS campaign_number,
-        hierarchy_type,
-        level_one_code, level_two_code, level_three_code, level_four_code, level_five_code,
-        level_six_code, level_seven_code, level_eight_code, level_nine_code,
-        toString(user_id)      AS user_id,
-        toString(user_name)    AS user_name,
-        toString(name_of_user) AS name_of_user
-    FROM analytics.project_staff_entity FINAL
-    WHERE role = 'DISTRIBUTOR'
-),
-roster_keys AS
-(
-    SELECT *, user_name AS k FROM roster_base WHERE user_name != ''
-    UNION ALL
-    SELECT *, user_id   AS k FROM roster_base WHERE user_id   != ''
-)
-SELECT
-    r.tenant_id,
-    r.campaign_number,
-    r.hierarchy_type,
-    r.level_one_code, r.level_two_code, r.level_three_code, r.level_four_code, r.level_five_code,
-    r.level_six_code, r.level_seven_code, r.level_eight_code, r.level_nine_code,
-    r.user_id,
-    r.user_name,
-    r.name_of_user AS cdd_name,
-    toUInt64(sum(s.records)) AS total_records_synced
-FROM roster_keys AS r
-LEFT JOIN sync_by_user AS s
-       ON s.tenant_id = r.tenant_id AND s.k = r.k
-GROUP BY
-    r.tenant_id, r.campaign_number, r.hierarchy_type,
-    r.level_one_code, r.level_two_code, r.level_three_code, r.level_four_code, r.level_five_code,
-    r.level_six_code, r.level_seven_code, r.level_eight_code, r.level_nine_code,
-    r.user_id, r.user_name, cdd_name;

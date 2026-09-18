@@ -633,25 +633,26 @@ ORDER BY synced_hour;
 -- ============================================================================
 -- KPI 11  CDD sync per health facility
 -- ============================================================================
--- Includes CDDs with zero records -- the mart is roster-driven, so they are
--- present with total_records_synced = 0. Substitute the level from query 0.
-SELECT level_three_code AS health_facility,
-       cdd_name,
-       total_records_synced
-FROM analytics.dm_cdd_sync_facility
+SELECT
+    maxIf(level_three_code, src = 'CREATED') AS health_facility,
+    maxIf(name_of_user,     src = 'CREATED') AS cdd_name,
+    sumIf(records,          src = 'SYNCED')  AS total_records_synced
+FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
   AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY user_name
+HAVING maxIf(role, src = 'CREATED') = 'DISTRIBUTOR'
 ORDER BY health_facility, total_records_synced DESC, cdd_name;
 
--- Facility roll-up. uniqExact on the user is exact here; sum(total_records_synced)
--- is NOT a safe grand total across the whole mart -- a CDD with two assignments
--- at different boundary paths carries their full record count on both rows.
-SELECT level_three_code AS health_facility,
-       uniqExact(user_id)                        AS cdds_assigned,
-       uniqExactIf(user_id, total_records_synced > 0) AS cdds_synced,
-       sum(total_records_synced)                 AS records_synced
-FROM analytics.dm_cdd_sync_facility
-WHERE campaign_number = {campaign_number:String}
-  AND hierarchy_type  = {hierarchy_type:String}
-GROUP BY health_facility
-ORDER BY records_synced DESC;
+SELECT count() AS synced_users_not_in_roster,
+       sum(recs) AS orphan_records
+FROM
+(
+    SELECT user_name,
+           sumIf(records, src = 'SYNCED') AS recs,
+           countIf(src = 'CREATED')       AS has_roster_row
+    FROM analytics.dm_user_sync
+    WHERE campaign_number = {campaign_number:String}
+    GROUP BY user_name
+)
+WHERE has_roster_row = 0 AND recs > 0;
