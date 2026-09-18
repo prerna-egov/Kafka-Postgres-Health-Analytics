@@ -43,7 +43,7 @@
 -- (ILLEGAL_AGGREGATION) once the alias is referenced again, as it is in the
 -- pct expression below.
 SELECT
-    lga_code,
+    level_one_code,
     sum(children_referred_part)       AS children_referred,
     sum(children_present_at_hf_part)  AS children_present_at_hf,
     sum(referred_fever_part)          AS referred_due_to_fever,
@@ -52,14 +52,14 @@ SELECT
        round(100 * sum(children_present_at_hf_part) / sum(children_referred_part), 2)) AS pct_present_at_hf
 FROM
 (
-    SELECT level_one_code AS lga_code,
+    SELECT level_one_code,
            toUInt64(sum(children_referred)) AS children_referred_part,
            toUInt64(0) AS children_present_at_hf_part,
            toUInt64(0) AS referred_fever_part,
            toUInt64(0) AS tested_positive_malaria_part
     FROM analytics.mart_referral
     WHERE campaign_number = {campaign_number:String}
-    GROUP BY lga_code
+    GROUP BY level_one_code
 
     UNION ALL
 
@@ -87,7 +87,7 @@ FROM
       AND upper(value)    = 'POSITIVE'
     GROUP BY level_one_code
 )
-GROUP BY lga_code
+GROUP BY level_one_code
 ORDER BY children_referred DESC;
 
 
@@ -109,7 +109,7 @@ ORDER BY children_referred DESC;
 -- which is the referral FLAG. KPI 3 below breaks those down by reaction from a
 -- different table; the two will not tie out.
 SELECT
-    health_facility,
+    level_three_code,
     sum(children_referred)       AS children_referred,
     sum(children_present_at_hf)  AS children_present_at_hf,
     sum(referred_fever)          AS referred_due_to_fever,
@@ -117,7 +117,7 @@ SELECT
     sum(referred_adrs)           AS referred_due_to_adrs
 FROM
 (
-    SELECT level_three_code AS health_facility,
+    SELECT level_three_code,
            toUInt64(sum(children_referred)) AS children_referred,
            toUInt64(0) AS children_present_at_hf,
            toUInt64(0) AS referred_fever,
@@ -126,7 +126,7 @@ FROM
     FROM analytics.mart_referral
     WHERE campaign_number = {campaign_number:String}
       AND hierarchy_type  = {hierarchy_type:String}
-    GROUP BY health_facility
+    GROUP BY level_three_code
 
     UNION ALL
 
@@ -155,8 +155,8 @@ FROM
       AND upper(value)    = 'POSITIVE'
     GROUP BY level_three_code
 )
-GROUP BY health_facility
-ORDER BY children_present_at_hf DESC, health_facility;
+GROUP BY level_three_code
+ORDER BY children_present_at_hf DESC, level_three_code;
 
 
 -- ============================================================================
@@ -177,7 +177,7 @@ ORDER BY children_present_at_hf DESC, health_facility;
 -- deployment ('adverseReactions' for SMC, 'AD3' for AZM), and pinning the
 -- wrong one yields a silent zero. The value IN-list keeps it bounded.
 SELECT
-    level_three_code AS health_facility,
+    level_three_code,
     sumIf(checklists, upper(value) = 'VOMITING')       AS vomiting,
     sumIf(checklists, upper(value) = 'ABDOMINAL_PAIN') AS abdominal_pain,
     sumIf(checklists, upper(value) = 'SKIN_REACTION')  AS skin_reaction,
@@ -188,7 +188,7 @@ FROM analytics.mart_hf_checklist_outcome
 WHERE campaign_number = {campaign_number:String}
   AND hierarchy_type  = {hierarchy_type:String}
   AND checklist_name  = 'HF_RF_DRUG_SE'
-GROUP BY health_facility
+GROUP BY level_three_code
 ORDER BY (vomiting + abdominal_pain + skin_reaction + weakness + other) DESC;
 
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Enforces: <type>(scope)?: subject  +  a GitHub ticket ref (#123) somewhere in the message.
+msg_file="$1"
+first_line=$(head -n1 "$msg_file")
+
+# Merge/revert commits are exempt
+case "$first_line" in
+  "Merge "*|"Revert "*) exit 0 ;;
+esac
+
+types='feat|fix|refactor|perf|style|test|docs|build|ops|chore'
+
+if ! printf '%s' "$first_line" | grep -qE "^($types)(\([^)]+\))?!?: .+"; then
+  echo ":heavy_multiplication_x: Commit message must start with a type prefix: ${types//|/, }" >&2
+  echo "  e.g.  fix: correct layout alignment on mobile #42" >&2
+  exit 1
+fi
+
+if ! grep -qE '#[0-9]+' "$msg_file"; then
+  echo ":heavy_multiplication_x: Commit message must reference a ticket, e.g. #123" >&2
+  exit 1
+fi

@@ -13,12 +13,12 @@ CREATE TABLE IF NOT EXISTS analytics.mart_referral
     level_seven_code        LowCardinality(String),
     level_eight_code        LowCardinality(String),
     level_nine_code         LowCardinality(String),
-    facility_id             String,
     facility_name           LowCardinality(String),
+    facility_id             String,
     children_referred       UInt64
 )
 ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, hierarchy_type, level_one_code, level_two_code, level_three_code, facility_id, cycle_index)
+ORDER BY (tenant_id, campaign_number, hierarchy_type, level_one_code, level_two_code, level_three_code, cycle_index, facility_name)
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS analytics.mart_hf_referral
@@ -36,12 +36,12 @@ CREATE TABLE IF NOT EXISTS analytics.mart_hf_referral
     level_seven_code            LowCardinality(String),
     level_eight_code            LowCardinality(String),
     level_nine_code             LowCardinality(String),
-    facility_id                 String,
     symptom                     LowCardinality(String),
+    facility_id                 String,
     referrals                   UInt64
 )
 ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, hierarchy_type, level_one_code, level_two_code, level_three_code, facility_id, cycle_index, symptom)
+ORDER BY (tenant_id, campaign_number, hierarchy_type, level_one_code, level_two_code, level_three_code, cycle_index, symptom)
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS analytics.mart_hf_checklist_outcome
