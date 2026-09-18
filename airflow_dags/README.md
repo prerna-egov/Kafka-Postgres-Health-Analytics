@@ -175,14 +175,20 @@ or via the UI: **Admin → Connections → +**, `Connection Id` = `airflow_api_d
 
 ## Configuring eGov service URLs via environment variables
 
-Unlike the Airflow Variables above, the base URLs for the DIGIT services `dags/egov_api_utils.py` calls are **plain environment variables**, read via `os.getenv()`, not Airflow Variables:
+Unlike the Airflow Variables above, the base URLs *and search paths* for the DIGIT services `dags/egov_api_utils.py` calls are **plain environment variables**, read via `os.getenv()`, not Airflow Variables:
 
-| Env var | What it controls | Valid values | Default if unset |
-|---|---|---|---|
-| `EGOV_BOUNDARY_SERVICE_BASE_URL` | Base URL for boundary-service calls | A host URL, e.g. `"http://localhost:8081"` | unset — boundary lookups are skipped (logged once, not per row) |
-| `EGOV_USER_SERVICE_BASE_URL` | Base URL for user-service calls | A host URL, e.g. `"http://localhost:8284"` | unset — user lookups are skipped (logged once, not per row) |
-| `EGOV_MDMS_SERVICE_BASE_URL` | Base URL for MDMS calls (used only when a user has more than one role, to rank/pick one) | A host URL | unset — role-ranking lookups are skipped (logged once, not per row) |
-| `EGOV_WORKFLOW_SERVICE_BASE_URL` | Base URL for workflow-service calls (bill/PGR workflow-status enrichment) | A host URL | unset — workflow-status lookups are skipped (logged once, not per row) |
+| Env var                                    | What it controls                                                                         | Valid values                                | Default if unset                                                        |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| `EGOV_BOUNDARY_SERVICE_BASE_URL`         | Base URL for boundary-service calls                                                      | A host URL, e.g.`"http://localhost:8081"` | unset — boundary lookups are skipped (logged once, not per row)        |
+| `EGOV_USER_SERVICE_BASE_URL`             | Base URL for user-service calls                                                          | A host URL, e.g.`"http://localhost:8284"` | unset — user lookups are skipped (logged once, not per row)            |
+| `EGOV_MDMS_SERVICE_BASE_URL`             | Base URL for MDMS calls (used only when a user has more than one role, to rank/pick one) | A host URL                                  | unset — role-ranking lookups are skipped (logged once, not per row)    |
+| `EGOV_WORKFLOW_SERVICE_BASE_URL`         | Base URL for workflow-service calls (bill/PGR workflow-status enrichment)                | A host URL                                  | unset — workflow-status lookups are skipped (logged once, not per row) |
+| `EGOV_BOUNDARY_RELATIONSHIP_SEARCH_PATH` | Path appended to the boundary-service base URL                                           | A path starting with`/`                   | `/boundary-service/boundary-relationships/_search`                    |
+| `EGOV_USER_SEARCH_PATH`                  | Path appended to the user-service base URL                                               | A path starting with`/`                   | `/user/_search`                                                       |
+| `EGOV_MDMS_SEARCH_PATH`                  | Path appended to the MDMS base URL                                                       | A path starting with`/`                   | `/egov-mdms-service/v1/_search`                                       |
+| `EGOV_WORKFLOW_PROCESS_SEARCH_PATH`      | Path appended to the workflow-service base URL                                           | A path starting with`/`                   | `/egov-workflow-v2/egov-wf/process/_search`                           |
+
+The four `*_PATH` vars exist so a DIGIT deployment that routes these differently — behind a gateway, or with a non-default `SERVER_CONTEXT_PATH` — can be re-pointed from the Helm chart without a code change. **They behave differently from the base URLs when unset**: an unset base URL disables that service's calls outright, whereas an unset path just falls back to the default above — a path never disables anything. Each default is the full path from the host root *including* the service's own context path, because the paired `*_BASE_URL` is only `scheme://host:port`.
 
 **Why env vars instead of Airflow Variables**: the external calls these back in `egov_api_utils.py` are made once per row (or per cache-miss) across a chunk of hundreds/thousands of rows, across every entity DAG. `Variable.get()` is a network round-trip to the Airflow webserver/metadata DB on every call — at that call volume it noticeably balloons task time and memory. `os.getenv()` is a zero-cost in-process read, so `egov_api_utils.py` reads each of these once at import time into a module-level constant (`BOUNDARY_SERVICE_BASE_URL`, etc.) and every call site just uses that constant directly — no per-call lookup at all. If a base URL is unset, that service's calls are skipped outright (not attempted-then-failed) and a single warning is logged the first time, not once per row — these constants can't change mid-process, so there's nothing to gain from retrying.
 
