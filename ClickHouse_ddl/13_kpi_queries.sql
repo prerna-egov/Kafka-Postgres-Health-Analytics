@@ -523,3 +523,136 @@ ORDER BY children_referred DESC;
 --   dm_user_sync -- an administrations-per-head figure is computable, but it is
 --   NOT the KPI as specified and is deliberately not presented as one.
 --   UNBLOCK: a per-CDD target assignment in the source.
+
+
+-- ============================================================================
+-- SYNC KPI QUERIES
+-- ============================================================================
+-- Counts are NOT pre-aggregated in the marts: the user is in the grain and the
+-- distinct count happens here. uniqExact() is therefore exact at any level --
+-- campaign, LGA, health facility -- with no double counting.
+--
+-- NEVER use sum() on a user count from dm_user_sync. Summing distinct counts
+-- across boundary cells over-reports: measured 9 synced distributors against a
+-- true 3 on unified-dev.
+--
+-- Filter on campaign_number, never campaign_id -- campaign_id is hardcoded ''
+-- by the transformation DAGs and matches nothing.
+-- ============================================================================
+
+
+-- 0. WHICH level_N_code IS THE HEALTH FACILITY?
+-- Run this first per hierarchy_type; the answer drives which level column the
+-- facility-grain reads below should group on. The mapping is NOT global -- a
+-- health facility sits at a different depth per hierarchy.
+SELECT hierarchy_type, level, boundary_type, parent_boundary_type
+FROM boundary_hierarchy_dim FINAL
+WHERE tenant_id = {tenant_id:String}
+ORDER BY hierarchy_type, level;
+
+
+-- ============================================================================
+-- KPIs 1-9  metric cards
+-- ============================================================================
+
+-- 1/2/3  Total CDDs created | synced | % synced
+SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
+       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_key, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND role = 'DISTRIBUTOR';
+
+-- 4/5/6  Facility users (excludes CDDs by definition -- separate role)
+SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
+       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_key, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND role = 'WAREHOUSE_MANAGER';
+
+-- 7/8/9  Supervisors -- four roles, aggregated
+SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
+       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_key, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND role IN ('NATIONAL_SUPERVISOR','PROVINCIAL_SUPERVISOR',
+               'DISTRICT_SUPERVISOR','TEAM_SUPERVISOR');
+
+-- All nine cards in one read, one row per cadre
+SELECT role,
+       uniqExactIf(user_key, src = 'CREATED') AS users_created,
+       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_key, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+GROUP BY role
+ORDER BY users_created DESC;
+
+-- Same, broken down by boundary. Substitute the level from query 0.
+SELECT level_three_code AS boundary_code, role,
+       uniqExactIf(user_key, src = 'CREATED') AS users_created,
+       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY boundary_code, role
+ORDER BY boundary_code, role;
+
+
+-- ============================================================================
+-- KPI 10  CDD sync by hours (histogram, last 24h)
+-- ============================================================================
+SELECT synced_hour,
+       uniqExact(user_name) AS cdds_synced,
+       sum(records)         AS records_synced
+FROM analytics.dm_cdd_sync_hourly
+WHERE campaign_number = {campaign_number:String}
+  AND role = 'DISTRIBUTOR'
+  AND synced_hour >= now() - INTERVAL 24 HOUR
+GROUP BY synced_hour
+ORDER BY synced_hour;
+
+-- Same histogram scoped to one boundary. Substitute the level from query 0.
+SELECT synced_hour, uniqExact(user_name) AS cdds_synced, sum(records) AS records_synced
+FROM analytics.dm_cdd_sync_hourly
+WHERE campaign_number  = {campaign_number:String}
+  AND role             = 'DISTRIBUTOR'
+  AND hierarchy_type   = {hierarchy_type:String}
+  AND level_three_code = {boundary_code:String}
+  AND synced_hour >= now() - INTERVAL 24 HOUR
+GROUP BY synced_hour
+ORDER BY synced_hour;
+
+
+-- ============================================================================
+-- KPI 11  CDD sync per health facility
+-- ============================================================================
+SELECT
+    maxIf(level_three_code, src = 'CREATED') AS health_facility,
+    maxIf(name_of_user,     src = 'CREATED') AS cdd_name,
+    sumIf(records,          src = 'SYNCED')  AS total_records_synced
+FROM analytics.dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY user_name
+HAVING maxIf(role, src = 'CREATED') = 'DISTRIBUTOR'
+ORDER BY health_facility, total_records_synced DESC, cdd_name;
+
+SELECT count() AS synced_users_not_in_roster,
+       sum(recs) AS orphan_records
+FROM
+(
+    SELECT user_name,
+           sumIf(records, src = 'SYNCED') AS recs,
+           countIf(src = 'CREATED')       AS has_roster_row
+    FROM analytics.dm_user_sync
+    WHERE campaign_number = {campaign_number:String}
+    GROUP BY user_name
+)
+WHERE has_roster_row = 0 AND recs > 0;
