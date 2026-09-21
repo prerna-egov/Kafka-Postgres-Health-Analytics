@@ -527,8 +527,11 @@ PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, id)
 SETTINGS index_granularity = 8192;
 
+-- ############################################################################
+-- DEVICE TOKENS EVENTS RAW
+-- ############################################################################
 
-CREATE TABLE IF NOT EXISTS analytics.device_token_events_raw
+CREATE TABLE IF NOT EXISTS analytics.device_tokens_events_raw
 (
     event_time DateTime64(3) DEFAULT now64(3),
     id         UUID          DEFAULT generateUUIDv4(),
