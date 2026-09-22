@@ -656,10 +656,11 @@ FROM
     GROUP BY user_name
 )
 WHERE has_roster_row = 0 AND recs > 0;
+
 -- ============================================================================
 -- REFERRAL KPIs
 -- ============================================================================
--- Marts: mart_referral | mart_hf_referral | mart_hf_checklist_outcome
+-- Marts: dm_referral_by_facility | dm_referral_by_symptom | dm_hf_checklist_outcome
 --
 -- The checklist mart carries ALL checklists (no HF_RF filter), so every read
 -- below pins checklist_name itself. That also means KPI 3 works the day
@@ -683,157 +684,149 @@ WHERE has_roster_row = 0 AND recs > 0;
 
 
 -- ============================================================================
--- KPI 1  Summary of referred children, by LGA  (bar chart)
---        1. Total children referred
---        2. Total children actually present at the health facility
---        3. Total children referred due to fever
---        4. Children tested +ve for malaria
--- ============================================================================
--- UNION ALL of three sources with an outer GROUP BY, not a FULL OUTER JOIN:
--- with join_use_nulls = 0 the coalesce form silently loses boundary keys.
+-- FOCUSED QUERIES BY MART
 --
--- WARNING on children_referred: mart_referral stores a per-cycle distinct
--- count, so summing it across cycles double-counts a child referred in two
--- cycles. Pin a single cycle_index for an exact figure, or accept the sum as an
--- upper bound. The other three measures are plain counts and sum cleanly.
--- The inner columns carry a _part suffix deliberately: `sum(x) AS x` over a
--- subquery column named x is rejected as a nested aggregate
--- (ILLEGAL_AGGREGATION) once the alias is referenced again, as it is in the
--- pct expression below.
+-- Separate, single-source queries for each supplementary mart instead of
+-- complex UNIONs. Each query is optimized for its specific data source.
+--
+-- For dm_referral_summary (unified referral KPIs), use separate queries.
+-- For dm_referral_by_facility (facility drill-downs), use KPI r94 below.
+-- For dm_referral_by_symptom (symptom breakdowns), use KPI r52 / r95 below.
+-- For dm_hf_checklist_outcome (supervision KPIs), use KPI r70 / r71 / r72 below.
+-- ============================================================================
+
+
+-- ============================================================================
+-- dm_referral_by_facility QUERIES
+-- ============================================================================
+
+-- KPI r94: Summary of referred children by health facility
+-- Grain: health facility (level_three_code), facility_name, facility_id
 SELECT
-    level_one_code,
-    sum(children_referred_part)       AS children_referred,
-    sum(children_present_at_hf_part)  AS children_present_at_hf,
-    sum(referred_fever_part)          AS referred_due_to_fever,
-    sum(tested_positive_malaria_part) AS tested_positive_malaria,
-    if(sum(children_referred_part) = 0, NULL,
-       round(100 * sum(children_present_at_hf_part) / sum(children_referred_part), 2)) AS pct_present_at_hf
-FROM
-(
-    SELECT level_one_code,
-           toUInt64(sum(children_referred)) AS children_referred_part,
-           toUInt64(0) AS children_present_at_hf_part,
-           toUInt64(0) AS referred_fever_part,
-           toUInt64(0) AS tested_positive_malaria_part
-    FROM analytics.mart_referral
-    WHERE campaign_number = {campaign_number:String}
-    GROUP BY level_one_code
-
-    UNION ALL
-
-    SELECT level_one_code,
-           toUInt64(0),
-           toUInt64(sum(referrals)),
-           -- 'SICK,FEVER' is ONE literal and it IS fever-involved.
-           toUInt64(sumIf(referrals, upper(symptom) IN ('FEVER', 'SICK,FEVER'))),
-           toUInt64(0)
-    FROM analytics.mart_hf_referral
-    WHERE campaign_number = {campaign_number:String}
-    GROUP BY level_one_code
-
-    UNION ALL
-
-    SELECT level_one_code,
-           toUInt64(0),
-           toUInt64(0),
-           toUInt64(0),
-           toUInt64(sum(checklists))
-    FROM analytics.mart_hf_checklist_outcome
-    WHERE campaign_number = {campaign_number:String}
-      AND checklist_name  = 'HF_RF_FEVER'
-      AND role IN ('HEALTH_FACILITY_WORKER', 'HEALTH_FACILITY_SUPERVISOR')
-      AND upper(value)    = 'POSITIVE'
-    GROUP BY level_one_code
-)
-GROUP BY level_one_code
+    level_three_code,
+    facility_id,
+    facility_name,
+    level_two_code AS lga_code,
+    sum(children_referred) AS children_referred
+FROM dm_referral_by_facility
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY level_three_code, facility_id, facility_name, level_two_code
 ORDER BY children_referred DESC;
 
 
--- KPI 1 drill-down: swap level_one_code for level_two_code / level_three_code
--- in all four branches to descend to ward, then health facility.
+-- Facility-level referral trends by cycle
+SELECT
+    facility_id,
+    facility_name,
+    cycle_index,
+    sum(children_referred) AS children_referred
+FROM dm_referral_by_facility
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY facility_id, facility_name, cycle_index
+ORDER BY facility_id, cycle_index;
 
 
 -- ============================================================================
--- KPI 2  Summary of referred children by health facility  (table)
---        1. Health Facility  2. Children referred  3. Children actually present
---        4. Referred due to fever  5. Children tested +ve for malaria
---        6. Referred due to ADRS
+-- dm_referral_by_symptom QUERIES
 -- ============================================================================
--- Health facility here is the BOUNDARY level, not project_facility_id --
--- the DSS drill chain labels the locality level "Health Facility"
--- (lga -> ward -> healthFacility -> community).
---
--- Referred due to ADRS comes from hf_referral_entity.symptom = 'DRUG_SE_*',
--- which is the referral FLAG. KPI 3 below breaks those down by reaction from a
--- different table; the two will not tie out.
+
+-- KPI r52: Children referred due to fever
 SELECT
     level_three_code,
-    sum(children_referred)       AS children_referred,
-    sum(children_present_at_hf)  AS children_present_at_hf,
-    sum(referred_fever)          AS referred_due_to_fever,
-    sum(tested_positive_malaria) AS tested_positive_malaria,
-    sum(referred_adrs)           AS referred_due_to_adrs
-FROM
-(
-    SELECT level_three_code,
-           toUInt64(sum(children_referred)) AS children_referred,
-           toUInt64(0) AS children_present_at_hf,
-           toUInt64(0) AS referred_fever,
-           toUInt64(0) AS tested_positive_malaria,
-           toUInt64(0) AS referred_adrs
-    FROM analytics.mart_referral
-    WHERE campaign_number = {campaign_number:String}
-      AND hierarchy_type  = {hierarchy_type:String}
-    GROUP BY level_three_code
-
-    UNION ALL
-
-    SELECT level_three_code,
-           toUInt64(0),
-           toUInt64(sum(referrals)),
-           toUInt64(sumIf(referrals, upper(symptom) IN ('FEVER', 'SICK,FEVER'))),
-           toUInt64(0),
-           toUInt64(sumIf(referrals, startsWith(upper(symptom), 'DRUG_SE')))
-    FROM analytics.mart_hf_referral
-    WHERE campaign_number = {campaign_number:String}
-      AND hierarchy_type  = {hierarchy_type:String}
-    GROUP BY level_three_code
-
-    UNION ALL
-
-    SELECT level_three_code,
-           toUInt64(0), toUInt64(0), toUInt64(0),
-           toUInt64(sum(checklists)),
-           toUInt64(0)
-    FROM analytics.mart_hf_checklist_outcome
-    WHERE campaign_number = {campaign_number:String}
-      AND hierarchy_type  = {hierarchy_type:String}
-      AND checklist_name  = 'HF_RF_FEVER'
-      AND role IN ('HEALTH_FACILITY_WORKER', 'HEALTH_FACILITY_SUPERVISOR')
-      AND upper(value)    = 'POSITIVE'
-    GROUP BY level_three_code
-)
+    sumIf(referrals, upper(symptom) IN ('FEVER', 'SICK,FEVER')) AS referred_due_to_fever,
+    sum(referrals) AS total_referrals
+FROM dm_referral_by_symptom
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
 GROUP BY level_three_code
-ORDER BY children_present_at_hf DESC, level_three_code;
+ORDER BY referred_due_to_fever DESC;
+
+
+-- KPI r95: Summary of referrals due to ADRS (by health facility)
+SELECT
+    level_three_code,
+    sumIf(referrals, startsWith(upper(symptom), 'DRUG_SE')) AS referred_due_to_adrs,
+    sum(referrals) AS total_referrals
+FROM dm_referral_by_symptom
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY level_three_code
+ORDER BY referred_due_to_adrs DESC;
+
+
+-- Symptom breakdown by boundary (LGA level)
+SELECT
+    level_two_code AS lga_code,
+    symptom,
+    sum(referrals) AS referral_count
+FROM dm_referral_by_symptom
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY level_two_code, symptom
+ORDER BY lga_code, referral_count DESC;
 
 
 -- ============================================================================
--- KPI 3  Summary of referrals due to ADRS, by health facility  (table)
---        1. Health Facility  2. Vomiting  3. Abdominal pain
---        4. Skin reaction    5. Weakness  6. Other
+-- dm_hf_checklist_outcome QUERIES
 -- ============================================================================
--- Source: the HF_RF_DRUG_SE checklist, attribute adverseReactions. The five
--- reaction literals are the complete set the Kibana dashboards filter on for
--- the SMC tenants (ABDOMINAL_PAIN / OTHERS / SKIN_REACTION / VOMITING /
--- WEAKNESS). AZM tenants use attribute AD3 with AD_-prefixed values instead.
---
--- `other` is a RESIDUAL, not a match on 'OTHERS': a reaction outside the four
--- named ones (DIARRHOEA, NAUSEA, STOMACH_PAIN all exist in the wider
--- vocabulary) then shows up in the table instead of vanishing from it.
---
--- attribute_code is NOT pinned. The code is form-defined and differs per
--- deployment ('adverseReactions' for SMC, 'AD3' for AZM), and pinning the
--- wrong one yields a silent zero. The value IN-list keeps it bounded.
+
+-- KPI r70: Checklists submitted by type
+SELECT
+    checklist_name,
+    level_two_code AS lga_code,
+    sum(checklists) AS checklists_submitted
+FROM dm_hf_checklist_outcome
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY checklist_name, level_two_code
+ORDER BY checklist_name, checklists_submitted DESC;
+
+
+-- KPI r71: Checklist summary by health facility
+SELECT
+    level_three_code,
+    checklist_name,
+    sum(checklists) AS checklists_submitted
+FROM dm_hf_checklist_outcome
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+  AND role IN ('HEALTH_FACILITY_WORKER', 'HEALTH_FACILITY_SUPERVISOR')
+GROUP BY level_three_code, checklist_name
+ORDER BY level_three_code, checklists_submitted DESC;
+
+
+-- KPI r72: Checklist summary by supervisor
+SELECT
+    role,
+    checklist_name,
+    sum(checklists) AS checklists_submitted
+FROM dm_hf_checklist_outcome
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+GROUP BY role, checklist_name
+ORDER BY checklist_name, checklists_submitted DESC;
+
+
+-- KPI r809: Tested positive for malaria
+SELECT
+    level_three_code,
+    sumIf(checklists, upper(value) = 'POSITIVE') AS tested_positive_malaria
+FROM dm_hf_checklist_outcome
+WHERE campaign_number = {campaign_number:String}
+  AND hierarchy_type  = {hierarchy_type:String}
+  AND checklist_name  = 'HF_RF_FEVER'
+  AND role IN ('HEALTH_FACILITY_WORKER', 'HEALTH_FACILITY_SUPERVISOR')
+  AND attribute_code  = 'malariaTest'
+GROUP BY level_three_code
+ORDER BY tested_positive_malaria DESC;
+
+
+-- KPI r95 ADRS breakdown: Referrals due to ADRS by reaction type
+-- Source: HF_RF_DRUG_SE checklist, attribute adverseReactions
+-- The five reaction types: VOMITING, ABDOMINAL_PAIN, SKIN_REACTION, WEAKNESS, OTHER
+-- (OTHER is a residual for reactions not in the named four)
 SELECT
     level_three_code,
     sumIf(checklists, upper(value) = 'VOMITING')       AS vomiting,
@@ -842,7 +835,7 @@ SELECT
     sumIf(checklists, upper(value) = 'WEAKNESS')       AS weakness,
     sum(checklists) - sumIf(checklists, upper(value) IN
         ('VOMITING', 'ABDOMINAL_PAIN', 'SKIN_REACTION', 'WEAKNESS')) AS other
-FROM analytics.mart_hf_checklist_outcome
+FROM dm_hf_checklist_outcome
 WHERE campaign_number = {campaign_number:String}
   AND hierarchy_type  = {hierarchy_type:String}
   AND checklist_name  = 'HF_RF_DRUG_SE'
@@ -858,23 +851,23 @@ ORDER BY (vomiting + abdominal_pain + skin_reaction + weakness + other) DESC;
 -- 1.4, 2.5 and 3 are blocked by missing source data, not by the queries.
 SELECT checklist_name, uniqExact(attribute_code) AS attribute_codes,
        sum(checklists) AS checklists
-FROM analytics.mart_hf_checklist_outcome
+FROM dm_hf_checklist_outcome
 GROUP BY checklist_name ORDER BY checklists DESC;
 
 -- The symptom vocabulary actually present. The KPI literals are FEVER, SICK,
 -- 'SICK,FEVER' and DRUG_SE_*; anything else is uncounted by KPI 2.
 SELECT symptom, sum(referrals) AS referrals
-FROM analytics.mart_hf_referral
+FROM dm_referral_by_symptom
 GROUP BY symptom ORDER BY referrals DESC;
 
 -- Cycle coverage per mart. A blank cycle_index is its own bucket, so pinning a
 -- cycle silently excludes those rows.
 SELECT 'referral' AS mart, cycle_index, sum(children_referred) AS measure
-FROM analytics.mart_referral GROUP BY cycle_index
+FROM dm_referral_by_facility GROUP BY cycle_index
 UNION ALL
 SELECT 'hf_referral', cycle_index, sum(referrals)
-FROM analytics.mart_hf_referral GROUP BY cycle_index
+FROM dm_referral_by_symptom GROUP BY cycle_index
 UNION ALL
 SELECT 'checklist', cycle_index, sum(checklists)
-FROM analytics.mart_hf_checklist_outcome GROUP BY cycle_index
+FROM dm_hf_checklist_outcome GROUP BY cycle_index
 ORDER BY mart, cycle_index;
