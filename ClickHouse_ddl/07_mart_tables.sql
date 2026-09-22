@@ -1058,7 +1058,7 @@ CREATE TABLE IF NOT EXISTS dm_referral_by_facility (
     facility_name              LowCardinality(String),
     facility_id                String,
     cycle_index                LowCardinality(String),
-    children_referred_uniq     AggregateFunction(uniqExact, String, String, String),
+    children_referred_uniq     AggregateFunction(uniqExact, String),
     children_referred          UInt64
 )
 ENGINE = MergeTree

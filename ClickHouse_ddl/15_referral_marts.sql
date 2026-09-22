@@ -42,14 +42,8 @@ SELECT
     facility_name,
     recipient_id AS facility_id,
     toString(JSONExtractString(additional_details, 'cycleIndex')) AS cycle_index,
-    uniqExactState(
-        toString(campaign_number),
-        toString(project_beneficiary_client_reference_id)
-    ) AS children_referred_uniq,
-    toUInt64(uniqExact(
-        toString(campaign_number),
-        toString(project_beneficiary_client_reference_id)
-    )) AS children_referred
+    uniqExactState(toString(project_beneficiary_client_reference_id)) AS children_referred_uniq,
+    toUInt64(uniqExact(toString(project_beneficiary_client_reference_id))) AS children_referred
 FROM referral_entity FINAL
 GROUP BY
     tenant_id, campaign_number, hierarchy_type,
