@@ -1020,3 +1020,112 @@ CREATE TABLE IF NOT EXISTS dm_suspected_fraud (
 ENGINE = MergeTree
 ORDER BY (tenant_id, campaign_number, created_by, minute_bucket)
 SETTINGS index_granularity = 8192;
+
+-- ==========================================================================
+-- SUPPLEMENTARY MART TABLE DEFINITIONS
+--
+-- Gold layer tables for referral and supervision KPIs. These are target
+-- tables for the materialized views in 15_referral_marts.sql.
+--
+-- Engine choice: plain MergeTree, not ReplacingMergeTree. Each refresh
+-- rebuilds the table wholesale (REFRESH EVERY 1 HOUR with no APPEND clause
+-- replaces the target's contents atomically), so there are never multiple
+-- versions of a row to collapse.
+--
+-- Create these BEFORE 15_referral_marts.sql -- the materialized views
+-- there reference them via TO <table>.
+-- ==========================================================================
+
+
+-- 1. dm_referral_by_facility
+-- Grain: one row per (tenant, campaign, boundary path, facility, cycle).
+-- Pre-aggregated distinct-referral count per facility for fast drill-downs.
+-- Use when: you need facility-level referral queries (KPI r94).
+-- Otherwise: query dm_referral_summary GROUP BY facility_id.
+CREATE TABLE IF NOT EXISTS dm_referral_by_facility (
+    tenant_id                  LowCardinality(String),
+    campaign_number            LowCardinality(String),
+    hierarchy_type             LowCardinality(String),
+    level_one_code             LowCardinality(String),
+    level_two_code             LowCardinality(String),
+    level_three_code           LowCardinality(String),
+    level_four_code            LowCardinality(String),
+    level_five_code            LowCardinality(String),
+    level_six_code             LowCardinality(String),
+    level_seven_code           LowCardinality(String),
+    level_eight_code           LowCardinality(String),
+    level_nine_code            LowCardinality(String),
+    facility_name              LowCardinality(String),
+    facility_id                String,
+    cycle_index                LowCardinality(String),
+    children_referred_uniq     AggregateFunction(uniqExact, String, String, String),
+    children_referred          UInt64
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, facility_id)
+SETTINGS index_granularity = 8192;
+
+
+-- 2. dm_referral_by_symptom
+-- Grain: one row per (tenant, campaign, boundary path, symptom, cycle).
+-- Pre-aggregated HF referral count per symptom (FEVER, SICK, MALARIA, DRUG_SE_*).
+-- Use when: you need symptom-level referral queries (KPI r52, r95).
+-- Otherwise: query dm_referral_summary WHERE symptom = :symptom.
+CREATE TABLE IF NOT EXISTS dm_referral_by_symptom (
+    tenant_id                  LowCardinality(String),
+    campaign_number            LowCardinality(String),
+    hierarchy_type             LowCardinality(String),
+    cycle_index                LowCardinality(String),
+    level_one_code             LowCardinality(String),
+    level_two_code             LowCardinality(String),
+    level_three_code           LowCardinality(String),
+    level_four_code            LowCardinality(String),
+    level_five_code            LowCardinality(String),
+    level_six_code             LowCardinality(String),
+    level_seven_code           LowCardinality(String),
+    level_eight_code           LowCardinality(String),
+    level_nine_code            LowCardinality(String),
+    symptom                    LowCardinality(String),
+    referrals                  UInt64
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, symptom)
+SETTINGS index_granularity = 8192;
+
+
+-- 3. dm_hf_checklist_outcome
+-- Grain: one row per (tenant, campaign, boundary path, checklist, role,
+--        attribute_code, value, date, cycle).
+-- Health facility checklist results (HF_RF_FEVER, HF_RF_DRUG_SE) joined with
+-- attribute values (fever screening, malaria test results, ADRS symptoms).
+-- Use when: you need checklist attribute-value combinations
+-- (KPI r70, r71, r72, r809 -- malaria screening, ADRS breakdown).
+CREATE TABLE IF NOT EXISTS dm_hf_checklist_outcome (
+    tenant_id                  LowCardinality(String),
+    campaign_number            LowCardinality(String),
+    hierarchy_type             LowCardinality(String),
+    cycle_index                LowCardinality(String),
+    level_one_code             LowCardinality(String),
+    level_two_code             LowCardinality(String),
+    level_three_code           LowCardinality(String),
+    level_four_code            LowCardinality(String),
+    level_five_code            LowCardinality(String),
+    level_six_code             LowCardinality(String),
+    level_seven_code           LowCardinality(String),
+    level_eight_code           LowCardinality(String),
+    level_nine_code            LowCardinality(String),
+    checklist_name             LowCardinality(String),
+    role                       LowCardinality(String),
+    attribute_code             LowCardinality(String),
+    value                      LowCardinality(String),
+    event_date                 Date32,
+    checklists_uniq            AggregateFunction(uniqExact, String),
+    checklists                 UInt64,
+
+    INDEX idx_dm_hc_checklist (checklist_name, role) TYPE set(0) GRANULARITY 1,
+    INDEX idx_dm_hc_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, checklist_name, role, event_date)
+SETTINGS index_granularity = 8192;
+
