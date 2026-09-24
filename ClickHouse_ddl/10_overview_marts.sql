@@ -32,7 +32,7 @@
 --   Summary-index fields with NO repo definition, defined here instead:
 --     total_households_visited      -> count() over dm_household_registry   (20)
 --     total_population_administered -> uniqExactMerge(administered_uniq)    (11)
---     total_administered_resources  -> sum(resource_quantity_sum)           (11)
+--     total_administered_resources  -> sumIf(resource_quantity_sum, is_delivered) (11)
 --     total_population_refused      -> (11) WHERE administration_status = 'BENEFICIARY_REFUSED'
 --     ineligible_population_total   -> (11) WHERE administration_status = 'INELIGIBLE'
 --
@@ -93,11 +93,12 @@
 --   710 DSS_HEALTH_POPULATION_ADMINISTERED (4 tiles)
 --         administered         : uniqExactMerge(administered_uniq) FROM (11)
 --                                WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+--                                  AND delivered_to = 'INDIVIDUAL' AND is_delivered
 --         target               : dm_targets_base, target_type='INDIVIDUAL',
 --                                node_level=2 AND code=<province>
 --         coverage %           : administered / target * 100
 --   711 DSS_HEALTH_OVERVIEW_DRUG_USED (4 tiles)
---         resources used       : sum(resource_quantity_sum) FROM (11)
+--         resources used       : sumIf(resource_quantity_sum, is_delivered) FROM (11)
 --         target               : dm_targets_base, target_type='PRODUCT',
 --                                node_level=2 AND code=<province>
 --         coverage %           : used / target * 100
@@ -153,12 +154,23 @@ SET allow_experimental_refreshable_materialized_view = 1;
 
 -- 1. mv_dm_smc_administered_base -> dm_smc_administered_base
 --
--- No status filter: administration_status is in the grain, so each panel picks
--- its own set at read time. This is what lets one mart serve the successful-
+-- NO WHERE CLAUSE AT ALL, and that is the point. administration_status,
+-- delivered_to and is_delivered are all in the grain, so each panel picks its
+-- own set at read time. This is what lets one mart serve the successful-
 -- administration tiles and panel 712's refusal/ineligible slices at once.
 -- Contrast mv_dm_successful_deliveries_base, which bakes
 -- IN ('ADMINISTRATION_SUCCESS','VISITED') into the mart and so can only ever
 -- answer the coverage question.
+--
+-- DO NOT re-add `delivered_to = 'INDIVIDUAL' AND is_delivered` here. A refused
+-- or ineligible beneficiary was never delivered to, so that predicate empties
+-- panel 712, viz 750/753, and the refusal/ineligible KPIs (r17/r18/r42/r43/
+-- r60/r61 and three columns of the campaign summary) -- silently, as zeroes
+-- rather than an error. It also makes both columns constant, which breaks
+-- viz 719's `sumIf(resource_quantity_sum, delivered_to = 'INDIVIDUAL')` and
+-- viz 722's `sumIf(resource_quantity_sum, is_delivered)`. Consumers that want
+-- only successful individual administrations apply the predicate themselves;
+-- every query in 13_kpi_queries.sql already does.
 --
 -- The uniqExactState argument list IS the SMC distinct-beneficiary key
 -- documented on the table in 07. toString() casts the two LowCardinality
@@ -184,8 +196,8 @@ SELECT
     level_nine_code,
     task_dates AS event_date,
     administration_status,
-    -- delivered_to,
-    -- is_delivered,
+    delivered_to,
+    is_delivered,
     gender,
     age,
     `cycleIndex` AS cycle_index,
@@ -206,7 +218,6 @@ SELECT
     toUInt64(count())                  AS task_rows,
     sum(quantity)                      AS resource_quantity_sum
 FROM project_task_entity FINAL
-WHERE delivered_to = 'INDIVIDUAL' AND is_delivered = true
 GROUP BY
     tenant_id,
     campaign_number,
@@ -228,6 +239,187 @@ GROUP BY
     age,
     cycle_index,
     product_name;
+
+
+-- 1b. mv_dm_smc_administered_by_beneficiary -> dm_smc_administered_by_beneficiary
+--
+-- The product-free twin of the mart above. Item 11 fans a child out across one
+-- row per product; this collapses that fan-out so a per-CHILD question cannot
+-- accidentally be answered by summing per-product rows.
+--
+-- WHY READING A PRODUCT-GRAINED MART DOES NOT INHERIT ITS FAN-OUT.
+-- This looks wrong at first glance and is worth spelling out, because the
+-- question keeps coming up: item 11 holds one row per product, so surely a
+-- child dosed with several products is already over-counted there, and surely
+-- that flows downstream?
+--
+-- It does not. administered_uniq is an AggregateFunction(uniqExact, ...) -- a
+-- SET OF DISTINCT KEYS, not a number. The key is
+--
+--     (campaign_number, cycleIndex,
+--      project_beneficiary_client_reference_id, administration_status)
+--
+-- and PRODUCT IS NOT IN IT. A child dosed with twenty products contributes the
+-- SAME key to twenty different states. uniqExactMergeState takes the UNION of
+-- those sets, so the key appears once and the child collapses back to one.
+-- Union, not addition, is what makes this exact rather than approximate.
+--
+-- Worked example, re-runnable -- campaign CMP-2025-08-05-001223, cycleIndex 0,
+-- ADMINISTRATION_SUCCESS. Four children, twenty products each:
+--
+--     rows in item 11                     20
+--     sum(administered_count)             80   <- the wrong way
+--     uniqExactMerge(administered_uniq)    4   <- what this view does
+--     uniqExact(...) over silver           4   <- ground truth
+--
+-- Whole-dataset check: building this mart by collapsing item 11, versus
+-- building it directly from project_task_entity FINAL at the same grain, gives
+-- 2829 rows both ways with ZERO rows differing on administered_count or
+-- task_rows. Deriving is not an approximation of the direct build; it is the
+-- same answer, from 3204 rows instead of 11305 and with no FINAL.
+--
+-- THE ONLY WAY TO REINTRODUCE THE INFLATION is to SUM administered_count.
+-- That is why administered_count is recomputed here with uniqExactMerge and
+-- never summed -- summing item 11's per-product counts is the exact bug this
+-- mart exists to prevent.
+--
+-- Deriving also keeps the two marts from drifting apart if a filter is ever
+-- edited on one and not the other.
+--
+-- DEPENDS ON is load-bearing: without it this view can refresh against a
+-- half-rebuilt item 11.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_smc_administered_by_beneficiary
+REFRESH EVERY 1 HOUR
+    DEPENDS ON mv_dm_smc_administered_base
+TO dm_smc_administered_by_beneficiary
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    event_date,
+    administration_status,
+    delivered_to,
+    is_delivered,
+    gender,
+    age,
+    cycle_index,
+    -- The column is qualified with the table alias because the output column
+    -- carries the SAME NAME as the input. Unqualified, the analyzer resolves
+    -- `administered_uniq` to this SELECT's own alias and rejects the query with
+    -- "aggregate function found inside another aggregate function".
+    uniqExactMergeState(b.administered_uniq)      AS administered_uniq,
+    -- Same measure for this row only, so the table reads without a Merge.
+    toUInt64(uniqExactMerge(b.administered_uniq)) AS administered_count,
+    sum(b.task_rows)                              AS task_rows,
+    sum(b.resource_quantity_sum)                  AS resource_quantity_sum
+FROM dm_smc_administered_base AS b
+GROUP BY
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    event_date,
+    administration_status,
+    delivered_to,
+    is_delivered,
+    gender,
+    age,
+    cycle_index;
+
+
+-- 1c. mv_dm_smc_administered_by_campaign -> dm_smc_administered_by_campaign
+--
+-- The last step of the collapse: 1 keeps product and date, 1b drops product,
+-- this drops date. At this grain a child dosed on two days is ONE row, so
+-- administered_count is directly readable -- the correct campaign number stops
+-- depending on the reader reaching for uniqExactMerge.
+--
+-- Derived from 1b rather than from 1 or from silver: one hop, smallest input,
+-- and it cannot disagree with the mart it collapses. The union-of-sets argument
+-- in 1b covers this second hop unchanged -- event_date is no more part of the
+-- distinct-beneficiary key than product_name is, so merging the states across
+-- collapsed dates dedupes a child back to one exactly the same way.
+--
+-- The `b.` qualifier is REQUIRED, not stylistic. The output column carries the
+-- same name as the input, and unqualified the analyzer resolves
+-- `administered_uniq` to this SELECT's own alias and fails the query with
+-- "aggregate function found inside another aggregate function".
+--
+-- administered_count is recomputed with uniqExactMerge, NEVER summed -- summing
+-- 1b's per-day counts is precisely the error this mart exists to prevent.
+--
+-- The boundary block stays in the grain. Collapsing it would silently pick the
+-- id-aware reading over the boundary-aware one and throw away every geographic
+-- cut; see the long note on item 24 in 07.
+--
+-- DEPENDS ON is load-bearing: without it this view can refresh against a
+-- half-rebuilt 1b.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_smc_administered_by_campaign
+REFRESH EVERY 1 HOUR
+    DEPENDS ON mv_dm_smc_administered_by_beneficiary
+TO dm_smc_administered_by_campaign
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    administration_status,
+    delivered_to,
+    is_delivered,
+    gender,
+    age,
+    cycle_index,
+    uniqExactMergeState(b.administered_uniq)      AS administered_uniq,
+    toUInt64(uniqExactMerge(b.administered_uniq)) AS administered_count,
+    sum(b.task_rows)                              AS task_rows,
+    sum(b.resource_quantity_sum)                  AS resource_quantity_sum
+FROM dm_smc_administered_by_beneficiary AS b
+GROUP BY
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    administration_status,
+    delivered_to,
+    is_delivered,
+    gender,
+    age,
+    cycle_index;
 
 
 -- 2. mv_dm_smc_adverse_events -> dm_smc_adverse_events

@@ -256,26 +256,52 @@ GROUP BY tenant_id, campaign_number, node_level, code, product_name, event_date;
 -- 5. mv_dm_campaign_coverage -> dm_campaign_coverage
 --
 -- DEPENDS ON is load-bearing: without it this view can refresh against a
--- half-rebuilt base mart.
+-- half-rebuilt base mart. mv_dm_smc_administered_by_beneficiary is defined
+-- later, in 10 -- a forward reference is fine, the view simply sits in
+-- WaitingForDependencies until that MV exists.
+--
+-- THE NUMERATOR IS DISTINCT CHILDREN, NOT DOSES. This read used to come from
+-- dm_successful_deliveries_base (1), whose total_administered counts
+-- task-resource ROWS. The denominator below is an INDIVIDUAL target, a count of
+-- PEOPLE, so that division was doses-over-people and overstated coverage by
+-- roughly the number of products each child receives. Measured on real data it
+-- read 7,168 where the correct answer was 3,384.
+--
+-- dm_successful_deliveries_base is still the right mart for a PRODUCT question,
+-- which is what it was built for; it is simply not the right one here. The
+-- product-free mart (23) is read rather than item 11 so that no product fan-out
+-- can reach this calculation at all.
 --
 -- CAVEAT: the target_type = 'INDIVIDUAL' filter means a campaign whose targets
 -- are all HOUSEHOLD produces no target row, and all of its deliveries drop out
 -- of this mart. If both types occur in practice, target_type should become a
 -- grouping column here instead of a filter.
+--
+-- KNOWN GAP, not a defect in this query: a campaign only appears with a
+-- numerator if its INDIVIDUAL target rows have a RESOLVED boundary
+-- (node_level > 0). Where boundary enrichment has not landed, targets sit at
+-- node_level = 0, the cut below drops them, and the campaign shows no coverage.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_coverage
 REFRESH EVERY 1 HOUR
-    DEPENDS ON mv_dm_successful_deliveries_base, mv_dm_targets_base
+    DEPENDS ON mv_dm_smc_administered_by_beneficiary, mv_dm_targets_base
 TO dm_campaign_coverage
 AS
-WITH campaign_deliveries AS (
+WITH campaign_administered AS (
+    -- ADMINISTRATION_SUCCESS + INDIVIDUAL matches KPI r3/r28 in 13 and viz 714,
+    -- so this mart agrees with every other coverage figure. is_delivered is
+    -- deliberately NOT added: no other coverage query uses it, and adding it
+    -- here alone would make this the one number that disagrees.
     SELECT
         tenant_id,
         campaign_number,
-        product_name,
-        sum(total_administered) AS total_administered,
-        sum(total_product_administered) AS total_product_administered
-    FROM dm_successful_deliveries_base
-    GROUP BY tenant_id, campaign_number, product_name
+        uniqExactMergeIf(administered_uniq,
+            administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
+            AND delivered_to = 'INDIVIDUAL')     AS total_administered,
+        sumIf(resource_quantity_sum,
+            administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
+            AND delivered_to = 'INDIVIDUAL')     AS total_product_administered
+    FROM dm_smc_administered_by_beneficiary
+    GROUP BY tenant_id, campaign_number
 ),
 campaign_targets_cte AS (
     SELECT
@@ -329,12 +355,11 @@ campaign_targets_cte AS (
 SELECT
     t.tenant_id AS tenant_id,
     t.campaign_number AS campaign_number,
-    ifNull(d.product_name, '') AS product_name,
-    ifNull(d.total_administered, 0) AS total_administered,
-    ifNull(d.total_product_administered, 0) AS total_product_administered,
+    ifNull(a.total_administered, 0) AS total_administered,
+    ifNull(a.total_product_administered, 0) AS total_product_administered,
     t.target_population AS target_population,
-    round(ifNull(d.total_administered, 0) / nullIf(t.target_population, 0) * 100, 2) AS coverage_percentage
+    round(ifNull(a.total_administered, 0) / nullIf(t.target_population, 0) * 100, 2) AS coverage_percentage
 FROM campaign_targets_cte t
-LEFT JOIN campaign_deliveries d
-    ON t.tenant_id = d.tenant_id
-   AND t.campaign_number = d.campaign_number;
+LEFT JOIN campaign_administered a
+    ON t.tenant_id = a.tenant_id
+   AND t.campaign_number = a.campaign_number;
