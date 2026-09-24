@@ -105,21 +105,30 @@ SETTINGS index_granularity = 8192;
 
 
 -- 3. dm_campaign_coverage
--- Grain: one row per (tenant, campaign, product).
--- Deliveries are product-level, the target denominator is campaign-level, so
--- each product is measured against the same campaign target.
+-- Grain: one row per (tenant, campaign).
+--
+-- CAMPAIGN GRAIN, MATCHING ITS OWN DENOMINATOR. The target is declared once per
+-- campaign, so the numerator must be too. product_name was in this grain while
+-- the numerator came from dm_successful_deliveries_base (1), which counts
+-- task-resource rows -- DOSES. Dividing doses by an INDIVIDUAL target (PEOPLE)
+-- overstates coverage by roughly the number of products each child receives,
+-- and a per-product row measured against the whole-campaign target invited
+-- summing the column, which double-counts any child given two products.
+--
+-- total_administered is now DISTINCT CHILDREN, read from
+-- dm_smc_administered_by_beneficiary (23) -- the product-free mart that exists
+-- precisely so this number cannot be got wrong. See the MV in 08.
 CREATE TABLE IF NOT EXISTS dm_campaign_coverage (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
-    product_name                String,
 
-    total_administered          UInt64,
-    total_product_administered  Int64,
-    target_population           Int64,
+    total_administered          UInt64,                 -- DISTINCT CHILDREN successfully administered, campaign-wide
+    total_product_administered  Int64,                  -- product units behind those administrations
+    target_population           Int64,                  -- the campaign's own declared INDIVIDUAL target
     coverage_percentage         Nullable(Float64) -- NULL when target_population is 0: no denominator means no rate, not 0%
 )
 ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, product_name)
+ORDER BY (tenant_id, campaign_number)
 SETTINGS index_granularity = 8192;
 
 
@@ -482,6 +491,158 @@ ENGINE = MergeTree
 -- third makes the global date-range filter a contiguous primary-key range;
 -- status follows because every panel narrows on it first.
 ORDER BY (tenant_id, campaign_number, event_date, administration_status, product_name)
+SETTINGS index_granularity = 8192;
+
+
+-- 23. dm_smc_administered_by_beneficiary
+-- Grain: exactly item 11's grain MINUS product_name -- one row per (tenant,
+-- campaign, boundary path, event date, administration status, delivered-to,
+-- delivered flag, demographics, cycle).
+--
+-- WHY THIS EXISTS. Item 11 carries product_name in its grain, so a child given
+-- two products occupies two rows there. That is correct for a per-product
+-- question and a TRAP for a per-child one: summing administered_count across
+-- those rows counts the child twice. uniqExactMerge over item 11 gets the right
+-- answer anyway -- the state is what makes that safe -- but it relies on every
+-- reader knowing to use it, and it pays for the product fan-out on every scan.
+--
+-- This mart removes the fan-out at the source. Read it for any question about
+-- CHILDREN; read item 11 when the question is about PRODUCTS. Its first
+-- consumer is mv_dm_campaign_coverage (3), whose denominator is an INDIVIDUAL
+-- target -- a count of people -- and which previously divided by a count of
+-- doses taken from dm_successful_deliveries_base (1).
+--
+-- Built by collapsing item 11 rather than re-reading project_task_entity, so
+-- the two marts cannot drift apart: uniqExactMergeState merges the per-product
+-- states back into one, which is exact, not an approximation.
+--
+-- Exact BECAUSE product_name is not part of the distinct-beneficiary key. The
+-- state is a SET of those keys, so a child dosed with several products carries
+-- the same key in every product's state, and merging UNIONS the sets rather
+-- than adding the counts -- the child dedupes back to one. Verified: collapsing
+-- item 11 and building straight from silver give identical rows, zero
+-- differences. The full argument and the worked example are on the MV in 10.
+--
+-- Same caveat as item 11: administration_status is IN THE GRAIN, not filtered.
+-- Every consumer states its own predicate.
+CREATE TABLE IF NOT EXISTS dm_smc_administered_by_beneficiary (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String), -- may be ''; see 10's header
+    hierarchy_type              LowCardinality(String),
+
+    -- Flattened Boundary Hierarchy Fields (ICCD level mapping in 10's header)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    event_date                  Date32,                 -- project_task_entity.task_dates (CLIENT audit last-modified date)
+    administration_status       LowCardinality(String), -- raw code, in the grain not filtered
+    delivered_to                LowCardinality(String), -- Data.deliveredTo: INDIVIDUAL / HOUSEHOLD / ''
+    is_delivered                Bool,                   -- Data.isDelivered; NOT a proxy for delivered_to
+    gender                      LowCardinality(String), -- MALE/FEMALE/OTHER/''
+    age                         UInt32,                 -- MONTHS, stored raw; bands are a read-time predicate
+    cycle_index                 UInt8,
+
+    -- Same state type and same distinct-beneficiary key as item 11, merged
+    -- across that mart's product rows. uniqExactMerge() here returns exactly
+    -- what uniqExactMerge() over item 11 returns for the same predicate.
+    administered_uniq           AggregateFunction(uniqExact, String, UInt8, String, String),
+    administered_count          UInt64,                 -- distinct beneficiaries in THIS row; do not SUM across rows
+    task_rows                   UInt64,                 -- additive
+    resource_quantity_sum       Int64,                  -- sum(quantity) across every product in this cell
+
+    INDEX idx_dm_sabb_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+-- Item 11's ORDER BY minus its product_name tail, so the two marts share a
+-- prefix and a query moving between them keeps the same access pattern.
+ORDER BY (tenant_id, campaign_number, event_date, administration_status)
+SETTINGS index_granularity = 8192;
+
+
+-- 24. dm_smc_administered_by_campaign
+-- Grain: item 23's grain MINUS event_date -- one row per (tenant, campaign,
+-- boundary path, administration status, delivered-to, delivered flag,
+-- demographics, cycle).
+--
+-- THE CAMPAIGN-LEVEL SOURCE OF TRUTH. The family reads as a progression, each
+-- step removing one way a single child can occupy more than one row:
+--
+--     11. dm_smc_administered_base            + product  + date
+--     23. dm_smc_administered_by_beneficiary  - product  + date
+--     24. this mart                           - product  - date
+--
+-- With no date dimension, a child dosed on two days inside the same campaign,
+-- cycle, status and place collapses to one row, so administered_count can be
+-- READ DIRECTLY here without a Merge. That is the point: the correct number
+-- stops depending on the reader knowing to reach for uniqExactMerge.
+--
+-- WHAT THIS STILL DOES NOT SETTLE, and deliberately so. A beneficiary id
+-- recorded under two boundary paths is still two rows, because the platform
+-- cannot tell which reading is right:
+--
+--   sum(administered_count)  is BOUNDARY-AWARE -- treats the two as two
+--                            children. Correct if two distributors in sibling
+--                            boundaries each searched up a child by name and
+--                            landed on the same backend id while genuinely
+--                            dosing different children.
+--   uniqExactMerge(...)      is ID-AWARE -- treats them as one child. Correct
+--                            if the id really is one person.
+--
+-- Both are kept so a consumer can pick. They differ by ~0.2% in practice, and
+-- almost all of that is one malformed household reference rather than the real
+-- same-name case. Do NOT "fix" this by dropping the boundary block: that would
+-- silently choose the id-aware answer and lose every geographic cut with it.
+--
+-- WHEN TO USE A SIBLING INSTEAD: item 11 for anything per-product; item 23
+-- when the answer needs a date.
+CREATE TABLE IF NOT EXISTS dm_smc_administered_by_campaign (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String), -- may be ''; see 10's header
+    hierarchy_type              LowCardinality(String),
+
+    -- Flattened Boundary Hierarchy Fields (ICCD level mapping in 10's header)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    administration_status       LowCardinality(String), -- raw code, in the grain not filtered
+    delivered_to                LowCardinality(String), -- Data.deliveredTo: INDIVIDUAL / HOUSEHOLD / ''
+    is_delivered                Bool,                   -- Data.isDelivered; NOT a proxy for delivered_to
+    gender                      LowCardinality(String), -- MALE/FEMALE/OTHER/''
+    age                         UInt32,                 -- MONTHS, stored raw; bands are a read-time predicate
+    cycle_index                 UInt8,
+
+    -- Same state type and same distinct-beneficiary key as items 11 and 23,
+    -- merged across this mart's collapsed date rows. uniqExactMerge() here
+    -- returns exactly what it returns over either sibling for the same
+    -- predicate -- verified identical, not approximately equal.
+    administered_uniq           AggregateFunction(uniqExact, String, UInt8, String, String),
+    -- Unlike its siblings, this column IS safe to read directly at this grain.
+    -- It is still a per-row figure: see the boundary note above before summing
+    -- across boundary paths.
+    administered_count          UInt64,
+    task_rows                   UInt64,                 -- additive
+    resource_quantity_sum       Int64,                  -- sum(quantity) across every product and date in this cell
+
+    INDEX idx_dm_sabc_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+-- Item 23's ORDER BY with the event_date term dropped, so all three siblings
+-- share a prefix and a query moving between them keeps the same access pattern.
+ORDER BY (tenant_id, campaign_number, administration_status)
 SETTINGS index_granularity = 8192;
 
 
