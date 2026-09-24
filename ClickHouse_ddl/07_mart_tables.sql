@@ -916,55 +916,85 @@ SETTINGS index_granularity = 8192;
 
 
 -- 18. dm_user_sync
--- Grain: one row per (tenant, campaign, boundary path, role).
+-- Sync marts. Split by grain, not one per KPI:
+--   dm_user_sync          -> KPIs 1-9  (created / synced / % per cadre)
+--   dm_cdd_sync_hourly    -> KPI 10    (CDD sync by hour, last 24h)
+--   dm_cdd_sync_facility  -> KPI 11    (records per CDD per health facility)
 --
--- A user appearing in a record table IS a user who synced -- the upstream
--- pipeline wrote a domain record and a sync record for the same event, so the
--- record tables are the sync signal.
+-- All three keep the USER in the grain and leave the distinct count to the read
+-- query. A pre-aggregated distinct count is not additive: stored per boundary
+-- cell, sum() double-counts any user present in two cells and no other
+-- aggregate recovers the true total. Measured on unified-dev, the
+-- pre-aggregated form reported 9 synced distributors against a true 3.
+-- Keeping the user in the grain makes uniqExact() exact at EVERY level with
+-- plain MergeTree and no AggregateFunction states.
 --
--- role IS A GRAIN COLUMN, NOT A FILTER, so one mart answers the sync rate for
--- warehouse managers, distributors and supervisors alike.
+-- All nine boundary levels are carried because the level that represents a
+-- health facility differs per hierarchy_type -- observed as level_four for one
+-- tenant and a ward at the same depth for another. hierarchy_type is stored
+-- alongside so the read can resolve the level via boundary_hierarchy_dim (06).
 --
--- Aggregate states rather than counts, for the same additivity reason as (11).
---
--- THE TWO SIDES ARE KEYED DIFFERENTLY and this cannot be fixed here: the
--- denominator counts staff user ids, the numerator counts user NAMES, because
--- the record tables carry no user id. The rate is a ratio of two independently
--- counted populations, not a matched per-user cohort.
-CREATE TABLE IF NOT EXISTS dm_user_sync (
-    tenant_id                   LowCardinality(String),
-    campaign_number             LowCardinality(String),
-    hierarchy_type              LowCardinality(String),
+-- campaign_id and project_id are deliberately ABSENT: campaign_id is hardcoded
+-- '' by the transformation DAGs and project_id is blank on ~76% of household
+-- rows, so both only invite filters that silently match nothing.
 
-    -- Flattened Boundary Hierarchy Fields
-    level_one_code                      LowCardinality(String),
-    level_two_code                      LowCardinality(String),
-    level_three_code                    LowCardinality(String),
-    level_four_code                     LowCardinality(String),
-    level_five_code                     LowCardinality(String),
-    level_six_code                      LowCardinality(String),
-    level_seven_code                    LowCardinality(String),
-    level_eight_code                    LowCardinality(String),
-    level_nine_code                     LowCardinality(String),
+CREATE TABLE IF NOT EXISTS analytics.dm_user_sync
+(
+    tenant_id            LowCardinality(String),
+    campaign_number      LowCardinality(String),
 
-    role                        LowCardinality(String), -- WAREHOUSE_MANAGER / DISTRIBUTOR / DISTRICT_SUPERVISOR / ...
+    hierarchy_type       LowCardinality(String),
+    level_one_code       LowCardinality(String),
+    level_two_code       LowCardinality(String),
+    level_three_code     LowCardinality(String),
+    level_four_code      LowCardinality(String),
+    level_five_code      LowCardinality(String),
+    level_six_code       LowCardinality(String),
+    level_seven_code     LowCardinality(String),
+    level_eight_code     LowCardinality(String),
+    level_nine_code      LowCardinality(String),
 
-    -- Aggregate STATE, not a number: a raw SELECT shows a binary blob, which is
-    -- expected. Roll it up with uniqExactMerge() -- correct at any level,
-    -- because a distinct count is not additive and summing per-cell counts
-    -- double-counts anything appearing in two cells. The plain column beside it
-    -- is the same measure for THIS ROW ONLY, so the table is readable without
-    -- losing the correct path.
-    users_created_uniq          AggregateFunction(uniqExact, String), -- staff user ids
-    users_synced_uniq           AggregateFunction(uniqExact, String), -- record-table user names
-    users_created_count         UInt64,                 -- distinct users in THIS row; do not SUM across rows
-    users_synced_count          UInt64,                 -- distinct users in THIS row; do not SUM across rows
+    role                 LowCardinality(String),
 
-    INDEX idx_dm_us_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+    src                  LowCardinality(String),   -- CREATED | SYNCED
+
+    user_id              String,   -- roster uuid; '' on SYNCED (record tables carry no user id)
+    user_name            String,   -- present on BOTH legs: the key that joins them
+    name_of_user         String,   -- blank on many SYNCED rows; CREATED is authoritative
+
+    records              UInt64
 )
 ENGINE = MergeTree
-ORDER BY (tenant_id, campaign_number, role)
+ORDER BY (tenant_id, campaign_number, role, src, level_two_code, level_three_code, user_name)
 SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS analytics.dm_cdd_sync_hourly
+(
+    tenant_id            LowCardinality(String),
+    campaign_number      LowCardinality(String),
+    hierarchy_type       LowCardinality(String),
+
+    level_one_code       LowCardinality(String),
+    level_two_code       LowCardinality(String),
+    level_three_code     LowCardinality(String),
+    level_four_code      LowCardinality(String),
+    level_five_code      LowCardinality(String),
+    level_six_code       LowCardinality(String),
+    level_seven_code     LowCardinality(String),
+    level_eight_code     LowCardinality(String),
+    level_nine_code      LowCardinality(String),
+
+    role                 LowCardinality(String),
+    synced_hour          DateTime,
+    user_name            String,
+    records              UInt64
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, role, synced_hour, hierarchy_type,
+          level_one_code, level_two_code, level_three_code, user_name)
+SETTINGS index_granularity = 8192;
+
 
 
 -- ==========================================================================

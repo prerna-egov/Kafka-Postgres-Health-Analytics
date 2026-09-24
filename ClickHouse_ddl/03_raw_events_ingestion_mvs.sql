@@ -231,9 +231,8 @@ AS
 SELECT raw
 FROM analytics.kafka_attendance_summary_events;
 
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.device_token_events_raw
-TO analytics.device_token_events_raw
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_device_tokens_events_raw
+TO analytics.device_tokens_events_raw
 AS
 SELECT raw
-FROM analytics.kafka_device_token_events;
+FROM analytics.kafka_device_tokens_events;
