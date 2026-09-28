@@ -14,3 +14,21 @@ CREATE TABLE IF NOT EXISTS boundary_hierarchy_dim (
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, hierarchy_type, boundary_type)
 SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS boundary_hierarchy_localization_dim (
+    id                      String,             
+    tenant_id               LowCardinality(String),
+    hierarchy_type          LowCardinality(String),
+    module                  LowCardinality(String),
+    code                    LowCardinality(String),
+    value                   LowCardinality(String), 
+    locale                  LowCardinality(String),
+    created_by              String,
+    last_modified_by        String,
+    created_time            Int64,
+    last_modified_time      Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (tenant_id, hierarchy_type, code, module)
+SETTINGS index_granularity = 8192;
