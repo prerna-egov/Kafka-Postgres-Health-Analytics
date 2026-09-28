@@ -28,6 +28,9 @@
 --      multiplies the total by the depth of the tree.
 --   3. Age bands are read-time predicates on age (in MONTHS): 3-11, 12-59 and
 --      3-59, where 3-59 is the UNION of the first two, not a third band.
+--   4. "Administered" is administration_status IN ('ADMINISTRATION_SUCCESS',
+--      'VISITED') with delivered_to = 'INDIVIDUAL' -- the same predicate as
+--      mv_dm_campaign_coverage in 08, so these KPIs and that mart agree.
 --
 -- SPAQ1 / SPAQ2: the sheet names these as products, but product_name in silver
 -- holds SP / AQ / Bednet variants, not a SPAQ1/SPAQ2 label. The AGE BAND is
@@ -68,7 +71,7 @@ WHERE node_level = root_level;
 -- r3 / r28  Children administered SPAQ (3-59 months)
 SELECT uniqExactMerge(administered_uniq) AS children_administered
 FROM dm_smc_administered_base
-WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
   AND delivered_to = 'INDIVIDUAL'
   AND age BETWEEN 3 AND 59
   AND campaign_number = {campaign:String};
@@ -76,7 +79,7 @@ WHERE administration_status = 'ADMINISTRATION_SUCCESS'
 -- r7 / r32  Children administered SPAQ1 (3-11 months)
 SELECT uniqExactMerge(administered_uniq) AS children_administered_3_11
 FROM dm_smc_administered_base
-WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
   AND delivered_to = 'INDIVIDUAL'
   AND age BETWEEN 3 AND 11
   AND campaign_number = {campaign:String};
@@ -84,7 +87,7 @@ WHERE administration_status = 'ADMINISTRATION_SUCCESS'
 -- r11 / r36  Children administered SPAQ2 (12-59 months)
 SELECT uniqExactMerge(administered_uniq) AS children_administered_12_59
 FROM dm_smc_administered_base
-WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
   AND delivered_to = 'INDIVIDUAL'
   AND age BETWEEN 12 AND 59
   AND campaign_number = {campaign:String};
@@ -101,7 +104,7 @@ FROM
     SELECT
         (SELECT uniqExactMerge(administered_uniq)
          FROM dm_smc_administered_base
-         WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+         WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
            AND delivered_to = 'INDIVIDUAL'
            AND age BETWEEN 3 AND 59
            AND campaign_number = {campaign:String}) AS administered,
@@ -150,20 +153,22 @@ WHERE administration_status = 'INELIGIBLE'
 
 -- r19 / r44  Total users created
 -- Drop the role predicate for all users; keep it for a single cadre.
-SELECT uniqExactMerge(users_created_uniq) AS total_users_created
+-- dm_user_sync is a two-leg mart (src = CREATED | SYNCED); user_name is the
+-- key present on both legs (see 14), so distinct users are uniqExactIf on it.
+SELECT uniqExactIf(user_name, src = 'CREATED') AS total_users_created
 FROM dm_user_sync
 WHERE campaign_number = {campaign:String};
 
 -- r20 / r45  Total users synced  (synced at least once)
-SELECT uniqExactMerge(users_synced_uniq) AS total_users_synced
+SELECT uniqExactIf(user_name, src = 'SYNCED') AS total_users_synced
 FROM dm_user_sync
 WHERE campaign_number = {campaign:String};
 
 -- r21 / r46  % of synced users
 SELECT
-    uniqExactMerge(users_synced_uniq)  AS synced,
-    uniqExactMerge(users_created_uniq) AS created,
-    round(uniqExactMerge(users_synced_uniq) / nullIf(uniqExactMerge(users_created_uniq), 0) * 100, 2) AS pct_synced
+    uniqExactIf(user_name, src = 'SYNCED')  AS synced,
+    uniqExactIf(user_name, src = 'CREATED') AS created,
+    round(synced / nullIf(created, 0) * 100, 2) AS pct_synced
 FROM dm_user_sync
 WHERE campaign_number = {campaign:String};
 
@@ -183,7 +188,7 @@ FROM
 (
     SELECT
         level_two_code AS boundary,
-        uniqExactMergeIf(administered_uniq, administration_status = 'ADMINISTRATION_SUCCESS' AND delivered_to = 'INDIVIDUAL') AS administered,
+        uniqExactMergeIf(administered_uniq, administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED') AND delivered_to = 'INDIVIDUAL') AS administered,
         uniqExactMergeIf(administered_uniq, administration_status = 'BENEFICIARY_REFUSED')  AS refusals,
         uniqExactMergeIf(administered_uniq, administration_status = 'INELIGIBLE')           AS ineligible
     FROM dm_smc_administered_base
@@ -233,7 +238,7 @@ SELECT
     uniqExactMergeIf(administered_uniq, age BETWEEN 12 AND 59) AS age_12_59,
     uniqExactMergeIf(administered_uniq, age BETWEEN  3 AND 59) AS age_3_59
 FROM dm_smc_administered_base
-WHERE administration_status = 'ADMINISTRATION_SUCCESS'
+WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
   AND delivered_to = 'INDIVIDUAL'
   AND campaign_number = {campaign:String}
 GROUP BY lga
@@ -313,7 +318,7 @@ ORDER BY refusals DESC;
 -- redose and wasted columns are NOT -- see the r14 and r5 flags.
 SELECT
     level_three_code AS lga,
-    uniqExactMergeIf(administered_uniq, administration_status = 'ADMINISTRATION_SUCCESS' AND delivered_to = 'INDIVIDUAL') AS target_group_administered,
+    uniqExactMergeIf(administered_uniq, administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED') AND delivered_to = 'INDIVIDUAL') AS target_group_administered,
     uniqExactMergeIf(administered_uniq, administration_status = 'INELIGIBLE') AS total_ineligible,
     round(
         uniqExactMergeIf(administered_uniq, administration_status = 'INELIGIBLE')
@@ -460,9 +465,9 @@ ORDER BY lga, age_bucket_order;
 -- precisely so these nine metric cards are one read rather than nine.
 SELECT
     role,
-    uniqExactMerge(users_created_uniq) AS created,
-    uniqExactMerge(users_synced_uniq)  AS synced,
-    round(uniqExactMerge(users_synced_uniq) / nullIf(uniqExactMerge(users_created_uniq), 0) * 100, 2) AS pct_synced
+    uniqExactIf(user_name, src = 'CREATED') AS created,
+    uniqExactIf(user_name, src = 'SYNCED')  AS synced,
+    round(synced / nullIf(created, 0) * 100, 2) AS pct_synced
 FROM dm_user_sync
 WHERE campaign_number = {campaign:String}
 GROUP BY role
@@ -545,6 +550,9 @@ ORDER BY children_referred DESC;
 -- Run this first per hierarchy_type; the answer drives which level column the
 -- facility-grain reads below should group on. The mapping is NOT global -- a
 -- health facility sits at a different depth per hierarchy.
+-- NOTE: boundary_hierarchy_dim (06) is not deployed on the cluster and nothing
+-- in this repo populates it yet, so this query fails / returns nothing there.
+-- Until it is loaded, take the facility level from the known hierarchy.
 SELECT hierarchy_type, level, boundary_type, parent_boundary_type
 FROM boundary_hierarchy_dim FINAL
 WHERE tenant_id = {tenant_id:String}
@@ -556,28 +564,28 @@ ORDER BY hierarchy_type, level;
 -- ============================================================================
 
 -- 1/2/3  Total CDDs created | synced | % synced
-SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
-       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
-       round(100 * uniqExactIf(user_key, src = 'SYNCED')
-                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+SELECT uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_name, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_name, src = 'CREATED'), 0), 2) AS pct_synced
 FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
   AND role = 'DISTRIBUTOR';
 
 -- 4/5/6  Facility users (excludes CDDs by definition -- separate role)
-SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
-       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
-       round(100 * uniqExactIf(user_key, src = 'SYNCED')
-                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+SELECT uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_name, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_name, src = 'CREATED'), 0), 2) AS pct_synced
 FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
   AND role = 'WAREHOUSE_MANAGER';
 
 -- 7/8/9  Supervisors -- four roles, aggregated
-SELECT uniqExactIf(user_key, src = 'CREATED') AS users_created,
-       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
-       round(100 * uniqExactIf(user_key, src = 'SYNCED')
-                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+SELECT uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_name, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_name, src = 'CREATED'), 0), 2) AS pct_synced
 FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
   AND role IN ('NATIONAL_SUPERVISOR','PROVINCIAL_SUPERVISOR',
@@ -585,10 +593,10 @@ WHERE campaign_number = {campaign_number:String}
 
 -- All nine cards in one read, one row per cadre
 SELECT role,
-       uniqExactIf(user_key, src = 'CREATED') AS users_created,
-       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced,
-       round(100 * uniqExactIf(user_key, src = 'SYNCED')
-                 / nullIf(uniqExactIf(user_key, src = 'CREATED'), 0), 2) AS pct_synced
+       uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced,
+       round(100 * uniqExactIf(user_name, src = 'SYNCED')
+                 / nullIf(uniqExactIf(user_name, src = 'CREATED'), 0), 2) AS pct_synced
 FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
 GROUP BY role
@@ -596,8 +604,8 @@ ORDER BY users_created DESC;
 
 -- Same, broken down by boundary. Substitute the level from query 0.
 SELECT level_three_code AS boundary_code, role,
-       uniqExactIf(user_key, src = 'CREATED') AS users_created,
-       uniqExactIf(user_key, src = 'SYNCED')  AS users_synced
+       uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced
 FROM analytics.dm_user_sync
 WHERE campaign_number = {campaign_number:String}
   AND hierarchy_type  = {hierarchy_type:String}
@@ -869,12 +877,17 @@ GROUP BY symptom ORDER BY referrals DESC;
 
 -- Cycle coverage per mart. A blank cycle_index is its own bucket, so pinning a
 -- cycle silently excludes those rows.
-SELECT 'referral' AS mart, cycle_index, sum(children_referred) AS measure
-FROM analytics.mart_referral GROUP BY cycle_index
-UNION ALL
-SELECT 'hf_referral', cycle_index, sum(referrals)
-FROM analytics.mart_hf_referral GROUP BY cycle_index
-UNION ALL
-SELECT 'checklist', cycle_index, sum(checklists)
-FROM analytics.mart_hf_checklist_outcome GROUP BY cycle_index
+-- Wrapped so the ORDER BY applies to the whole UNION, not only its last branch.
+SELECT *
+FROM
+(
+    SELECT 'referral' AS mart, cycle_index, sum(children_referred) AS measure
+    FROM analytics.mart_referral GROUP BY cycle_index
+    UNION ALL
+    SELECT 'hf_referral', cycle_index, sum(referrals)
+    FROM analytics.mart_hf_referral GROUP BY cycle_index
+    UNION ALL
+    SELECT 'checklist', cycle_index, sum(checklists)
+    FROM analytics.mart_hf_checklist_outcome GROUP BY cycle_index
+)
 ORDER BY mart, cycle_index;

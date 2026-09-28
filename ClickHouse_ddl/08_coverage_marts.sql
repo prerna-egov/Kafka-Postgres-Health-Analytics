@@ -287,7 +287,8 @@ REFRESH EVERY 1 HOUR
 TO dm_campaign_coverage
 AS
 WITH campaign_administered AS (
-    -- ADMINISTRATION_SUCCESS + INDIVIDUAL matches KPI r3/r28 in 13 and viz 714,
+    -- ADMINISTRATION_SUCCESS or VISITED, INDIVIDUAL only -- the same predicate
+    -- as KPI r3/r28 (and the rest of the administered KPIs) in 13 and viz 714,
     -- so this mart agrees with every other coverage figure. is_delivered is
     -- deliberately NOT added: no other coverage query uses it, and adding it
     -- here alone would make this the one number that disagrees.
