@@ -54,7 +54,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                    (14's prj_by_project)                                  beneficiary's own `locality` field)
 #   stg_individual                  individual       individual.client_reference_id =                       ageInMonths / gender BACKFILL when the
 #                                                    beneficiary.beneficiary_client_reference_id AND tenant beneficiary's own fields lack them
-#                                                    (16's prj_by_client_ref, one row per reference)
+#                                                    (14's prj_by_client_ref, one row per reference)
 #   boundary-service response       levels           (tenant_id, hierarchy_type, lookup_boundary_code)      level_one_code .. level_nine_code
 #   user-service response           users            (tenant_id, client_last_modified_by)                   user_name, name_of_user, role, user_address
 

@@ -344,7 +344,7 @@ def staff_bridge_join_sql(where: str, on_user_expr: str, on_tenant_expr: str, al
     the newest version (argMax on last_modified_time) and drop it if deleted;
     then per user keep the project of the LOWEST staff row id -- the Python
     DAGs' `ORDER BY ps.id ASC LIMIT 1 BY ps.staff_id`, itself
-    ProjectStaffRepository's default ordering. Reads through 17's prj_by_staff
+    ProjectStaffRepository's default ordering. Reads through 14's prj_by_staff
     (`where` must be `tenant_id = T AND staff_id IN (...)`).
     """
     return f"""

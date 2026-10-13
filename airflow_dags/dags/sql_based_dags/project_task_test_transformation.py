@@ -58,7 +58,8 @@ from sql_flatten_common import (  # noqa: E402
 #   stg_project_task (FINAL)      task             tenant_id + id range of the slice                        task_id, status, client audit columns,
 #                                                                                                           additional_details, synced_*, task_dates
 #   stg_task_resource             resource         resource.task_id = task.id AND tenant                    id, client_reference_id, product_variant,
-#                                                  (16's prj_by_task, argMax, is_deleted after argMax)      quantity, is_delivered, delivery_comments
+#                                                  (14's prj_by_task, argMax, is_deleted after argMax)      quantity, is_delivered, delivery_comments
+
 #                                                  ONE SILVER ROW PER RESOURCE; placeholder row when none
 #   stg_address (FINAL)           address          address.id = task.address_id AND tenant (own PK)         latitude, longitude, location_accuracy,
 #                                                                                                           boundary_code, geo_point, boundary lookup
@@ -70,7 +71,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                  (14's prj_by_project, one boundary per project)
 #   stg_project_beneficiary       beneficiary      beneficiary.client_reference_id =                        household_id / individual_id, and the key
 #                                                  task.project_beneficiary_client_reference_id AND tenant  into household / individual
-#                                                  (16's prj_by_client_ref, ONE row per task-side ref)
+#                                                  (14's prj_by_client_ref, ONE row per task-side ref)
 #   stg_household                 household        household.client_reference_id = beneficiary ref          member_count   (HOUSEHOLD projects only)
 #                                                  AND tenant (prj_by_client_ref, one row per ref)
 #   stg_individual                individual       individual.client_reference_id = beneficiary ref         date_of_birth, gender, age (INDIVIDUAL only)
