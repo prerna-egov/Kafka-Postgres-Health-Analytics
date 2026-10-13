@@ -59,6 +59,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                                                                           additional_details, synced_*, task_dates
 #   stg_task_resource             resource         resource.task_id = task.id AND tenant                    id, client_reference_id, product_variant,
 #                                                  (14's prj_by_task, argMax, is_deleted after argMax)      quantity, is_delivered, delivery_comments
+
 #                                                  ONE SILVER ROW PER RESOURCE; placeholder row when none
 #   stg_address (FINAL)           address          address.id = task.address_id AND tenant (own PK)         latitude, longitude, location_accuracy,
 #                                                                                                           boundary_code, geo_point, boundary lookup

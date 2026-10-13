@@ -48,6 +48,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                                                                           register_number
 #   stg_project_staff             staff            staff.staff_id = individual.user_uuid AND tenant         the project id of the user's lowest-id
 #                                                  (14's prj_by_staff)                                      non-deleted staff row
+
 #   stg_project (FINAL)           project          project.id = staff.first_project_id AND tenant           project_* columns, campaign_number,
 #                                                                                                           hierarchy_type
 #   stg_project_address           project_address  project_address.project_id = project.id AND tenant       the boundary lookup code (project only,

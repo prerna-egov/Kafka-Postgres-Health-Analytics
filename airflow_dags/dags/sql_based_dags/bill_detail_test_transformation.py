@@ -58,6 +58,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                               (14's prj_by_billdetail, grouped per detail)           arrays)
 #   stg_project_staff              staff        staff.staff_id = detail.last_modified_by AND tenant    the project id of the user's lowest-id
 #                                               (14's prj_by_staff)                                    non-deleted staff row
+
 #   stg_project (FINAL)            project      project.id = staff.first_project_id AND tenant         project_* columns, campaign_number,
 #                                                                                                      hierarchy_type
 #   boundary-service response      levels       (tenant_id, hierarchy_type, bill.locality_code)        level_one_code .. level_nine_code
