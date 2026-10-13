@@ -58,7 +58,7 @@ from sql_flatten_common import (  # noqa: E402
 #   stg_address (FINAL)        address    address.id = household.address_id AND tenant (own PK)   address_*, geo_point_*, address_locality,
 #                                                                                                 the boundary lookup code
 #   stg_project_staff          staff      staff.staff_id = household.client_last_modified_by      the project id of the user's LOWEST-id
-#                                         AND tenant (17's prj_by_staff, argMax per staff row,    non-deleted staff assignment
+#                                         AND tenant (14's prj_by_staff, argMax per staff row,    non-deleted staff assignment
 #                                         then argMin(project_id, id) per user)
 #   stg_project (FINAL)        project    project.id = staff.first_project_id AND tenant (own PK)  project_* columns, campaign_number,
 #                                                                                                 hierarchy_type and cycles (cycleIndex)

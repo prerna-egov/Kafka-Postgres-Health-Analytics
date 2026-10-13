@@ -65,7 +65,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                                                                              cycles (cycleIndex on created_time)
 #   stg_project_address        project_address        project_id = project.id AND tenant (14's prj_by_project) boundary code fallback for PROJECT refs
 #   stg_project_staff          staff                  staff.staff_id = the held facility id AND tenant, ONLY   the STAFF facility's project ...
-#                                                     when its derived type is STAFF (17's prj_by_staff)
+#                                                     when its derived type is STAFF (14's prj_by_staff)
 #   stg_project (FINAL)        staff_project          id = staff.first_project_id AND tenant                   ... hierarchy_type for STAFF facilities
 #   stg_project_address        staff_project_address  project_id = staff_project.id AND tenant                 ... boundary code for STAFF facilities
 #   boundary-service response  levels                 (tenant_id, hierarchy_type, boundary_code)               level_one_code .. level_nine_code

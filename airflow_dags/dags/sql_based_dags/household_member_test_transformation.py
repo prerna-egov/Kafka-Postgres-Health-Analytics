@@ -63,14 +63,14 @@ from sql_flatten_common import (  # noqa: E402
 #                                                                                                       raw additional_details, synced_*, task_dates
 #   stg_household                  household   household.client_reference_id =                          the household's address_id and its
 #                                              member.household_client_reference_id AND tenant           additional_details (merged into the member's)
-#                                              (17's prj_by_client_ref, ONE row per reference)
+#                                              (14's prj_by_client_ref, ONE row per reference)
 #   stg_address (FINAL)            address     address.id = household.latest_address_id AND tenant      geo_point_*, boundary_code, the boundary
 #                                              (own PK) -- the member has no address of its own          lookup code
 #   stg_individual                 individual  individual.client_reference_id =                         date_of_birth, age, gender, and the
 #                                              member.individual_client_reference_id AND tenant          height / disabilityType extras
-#                                              (17's prj_by_client_ref, ONE row per reference)
+#                                              (14's prj_by_client_ref, ONE row per reference)
 #   stg_project_staff              staff       staff.staff_id = member.client_last_modified_by          the project id of the user's LOWEST-id
-#                                              AND tenant (17's prj_by_staff, argMax per staff row,     non-deleted staff assignment
+#                                              AND tenant (14's prj_by_staff, argMax per staff row,     non-deleted staff assignment
 #                                              then argMin(project_id, id) per user)
 #   stg_project (FINAL)            project     project.id = staff.first_project_id AND tenant (own PK)  project_* columns, campaign_number,
 #                                                                                                       hierarchy_type and cycles (cycleIndex)
