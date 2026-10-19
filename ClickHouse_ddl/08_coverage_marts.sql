@@ -5,9 +5,15 @@
 -- Each materialized view here writes into its target table from
 -- 07_mart_tables.sql, which must be created first.
 --
--- REFRESH EVERY 1 HOUR with a TO target and no APPEND clause means each
--- refresh atomically replaces the target table's contents -- these are full
--- rebuilds, not incremental appends. No Airflow DAG drives this layer.
+-- A TO target and no APPEND clause means each refresh atomically replaces
+-- the target table's contents -- these are full rebuilds, not incremental
+-- appends. No Airflow DAG drives this layer.
+--
+-- REFRESH EVERY 80 YEAR means the views never refresh on their own: rebuild
+-- them with SYSTEM REFRESH VIEW, one at a time, dependencies first. An hourly
+-- schedule fired every view at once (at :00 and on every server start), and
+-- the combined memory got the ClickHouse pod evicted. Don't go above ~80
+-- YEAR: the next-refresh time is a DateTime and 1000 YEAR overflows it.
 --
 -- Both silver sources are ReplacingMergeTree(last_modified_time), so every
 -- read here uses FINAL: without it, CDC row versions that background merges
@@ -28,7 +34,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- change what "coverage" means, so widening this is a metric decision rather
 -- than a bug fix.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_successful_deliveries_base
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_successful_deliveries_base
 AS
 SELECT
@@ -77,7 +83,7 @@ GROUP BY
 -- excludes them from every level query while leaving the unattributed remainder
 -- measurable rather than silently dropped.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_targets_base
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_targets_base
 AS
 SELECT
@@ -144,7 +150,7 @@ GROUP BY
 -- ifNull() on the join result is deliberate -- the leaf test would invert if a
 -- profile ever set join_use_nulls = 1.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_hierarchy
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
     DEPENDS ON mv_dm_targets_base
 TO dm_campaign_hierarchy
 AS
@@ -221,7 +227,7 @@ WHERE ifNull(i.code, '') = '';
 -- No coverage ratio is stored; it is computed at query time against
 -- dm_targets_base on (tenant_id, campaign_number, node_level, code).
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_coverage_by_node
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
     DEPENDS ON mv_dm_successful_deliveries_base
 TO dm_coverage_by_node
 AS
@@ -282,7 +288,7 @@ GROUP BY tenant_id, campaign_number, node_level, code, product_name, event_date;
 -- (node_level > 0). Where boundary enrichment has not landed, targets sit at
 -- node_level = 0, the cut below drops them, and the campaign shows no coverage.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_campaign_coverage
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
     DEPENDS ON mv_dm_smc_administered_by_beneficiary, mv_dm_targets_base
 TO dm_campaign_coverage
 AS

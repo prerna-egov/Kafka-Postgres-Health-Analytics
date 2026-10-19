@@ -114,9 +114,15 @@
 -- ==========================================================================
 -- SECTION 2: LOGIC
 --
--- REFRESH EVERY 1 HOUR with a TO target and no APPEND clause means each
--- refresh atomically replaces the target table's contents -- these are full
--- rebuilds, not incremental appends. No Airflow DAG drives this layer.
+-- A TO target and no APPEND clause means each refresh atomically replaces
+-- the target table's contents -- these are full rebuilds, not incremental
+-- appends. No Airflow DAG drives this layer.
+--
+-- REFRESH EVERY 80 YEAR means the views never refresh on their own: rebuild
+-- them with SYSTEM REFRESH VIEW, one at a time, dependencies first. An hourly
+-- schedule fired every view at once (at :00 and on every server start), and
+-- the combined memory got the ClickHouse pod evicted. Don't go above ~80
+-- YEAR: the next-refresh time is a DateTime and 1000 YEAR overflows it.
 --
 -- Each SELECT's column ORDER matches its target table's column order exactly:
 -- a materialized view with a TO target binds by POSITION, not by name.
@@ -134,7 +140,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- and baking either narrowing in here would make the mart serve one panel
 -- instead of eight.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_complaints_base
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_complaints_base
 AS
 SELECT
@@ -185,7 +191,7 @@ GROUP BY
 -- to silver (_build_silver_row defaults a missing one to 0); ageing those
 -- would put them ~55 years old, in the "more than 48h" bucket, silently.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_complaints_open_ageing
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_complaints_open_ageing
 AS
 SELECT
@@ -275,7 +281,7 @@ GROUP BY
 -- NULL upstream, and last_modified_time doubles as the ReplacingMergeTree
 -- version column), so this is a guard against future drift, not a live fix.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_complaints_resolution
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_complaints_resolution
 AS
 SELECT

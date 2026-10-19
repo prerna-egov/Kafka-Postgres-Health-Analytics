@@ -9,7 +9,7 @@
 -- facility-level or symptom-level drill-downs. Otherwise, query the primary
 -- marts and GROUP BY the dimension you need.
 --
--- All refresh at 1 HOUR to stay in sync with source data.
+-- All are REFRESH EVERY 80 YEAR, i.e. manual refresh only (see 08).
 -- ==========================================================================
 
 SET allow_experimental_refreshable_materialized_view = 1;
@@ -23,7 +23,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- Use when: you need fast facility-level drill-down (r94).
 -- Otherwise: query dm_referral_summary GROUP BY facility_id.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_referral_by_facility
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_referral_by_facility
 AS
 SELECT
@@ -62,7 +62,7 @@ GROUP BY
 -- Use when: you need fast symptom-level drill-down (r52, r95: fever/malaria/ADRS).
 -- Otherwise: query dm_referral_summary WHERE symptom = :symptom.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_referral_by_symptom
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_referral_by_symptom
 AS
 SELECT
@@ -98,7 +98,7 @@ GROUP BY
 -- Use when: you need checklist completion rates and attribute values
 -- (r70, r71, r72, r809).
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_hf_checklist_outcome
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_hf_checklist_outcome
 AS
 SELECT
