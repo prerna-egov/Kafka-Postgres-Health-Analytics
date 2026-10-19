@@ -9,3 +9,14 @@
 /airflow_dags/dags/__pycache__
 /airflow_dags/.env
 /table_dumps
+/custom_reports_reference
+/airflow_dags/dags/sql_based_dags/__pycache__
+/airflow_dags/dags/sql_based_dags/.airflowignore
+
+# Synthetic data generator downloads
+/synthetic_data/polio/grid3_dl/
+/synthetic_data/**/__pycache__/
+/synthetic_data
+
+/Grafana_Stats
+/KPI
