@@ -10,7 +10,7 @@
 -- SYNCED counts user_name, because no record table carries a user id. The rate
 -- is a ratio of two independently keyed populations, not a matched cohort.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_dm_user_sync
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO analytics.dm_user_sync
 EMPTY AS
 SELECT
@@ -124,7 +124,7 @@ GROUP BY
 -- rows. Stored as a dimension, the mart also serves the same histogram for any
 -- other cadre.
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_dm_cdd_sync_hourly
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO analytics.dm_cdd_sync_hourly
 EMPTY AS
 SELECT

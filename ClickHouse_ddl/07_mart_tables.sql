@@ -646,6 +646,310 @@ ORDER BY (tenant_id, campaign_number, administration_status)
 SETTINGS index_granularity = 8192;
 
 
+-- 25. dm_campaign_daily_progress
+-- Grain: one row per (tenant, campaign, boundary NODE, calendar day), for every
+-- day of the campaign window -- days with no vaccinations included, as zeros.
+--
+-- Serves the overview "campaign progress" bar chart (health-campaign-services
+-- #2308): children vaccinated per campaign day, following the hierarchical
+-- filter (#2309), tooltip showing the calendar date.
+--
+-- READING IT. Every node is its own row, rolled up from all its descendants, so
+-- one node gives one row per day and nothing needs aggregating:
+--
+--     National : WHERE node_level = <campaign's root level>
+--     District : WHERE node_level = 3 AND level_two_code = :province
+--                                     AND level_three_code = :district
+--     ORDER BY event_date
+--
+-- The path is left-packed like dm_targets_base: level_N_code is set for every
+-- N <= node_level and empty below it, so the #2309 cascade works unchanged.
+--
+-- THE WINDOW is the campaign's PLANNED window from dm_targets_base: earliest
+-- project start to the latest project end or today(), whichever is first.
+-- Deliveries dated outside it are not charted (that also drops the 1970-01-01
+-- placeholder task dates), and a campaign with no dated targets has no rows.
+-- today() is evaluated at refresh time -- marts refresh only on demand, so
+-- "today" means the last refresh (refreshed_at).
+--
+-- ONLY NODES WITH AT LEAST ONE VACCINATION IN THE WINDOW ARE PRESENT. Each such
+-- node gets every day of the window, zeros included. Zero-filling every target
+-- node instead measured ~22M rows on the cluster (52k villages x ~55 days in
+-- the largest campaigns) against ~20k this way. A node that never vaccinated
+-- anyone has no rows; the chart shows it as no data.
+--
+-- "Vaccinated" is the administered predicate used everywhere else
+-- (13_kpi_queries.sql rule 4, mv_dm_campaign_coverage):
+-- administration_status IN ('ADMINISTRATION_SUCCESS','VISITED') AND
+-- delivered_to = 'INDIVIDUAL', counted on the distinct-beneficiary key of
+-- item 23. Same caveat as there: status is in the key, so a child with both a
+-- SUCCESS and a VISITED task counts twice.
+CREATE TABLE IF NOT EXISTS dm_campaign_daily_progress (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    -- The node's root-to-node path (left-packed; empty below node_level)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    node_level                  UInt8,
+    code                        LowCardinality(String), -- the node's own code (level_<node_level>_code)
+
+    event_date                  Date32,                 -- calendar date, for the tooltip
+    campaign_day                UInt16,                 -- event_date - campaign start + 1
+
+    children_vaccinated             UInt64,             -- distinct children vaccinated ON this day; the bar
+    children_vaccinated_cumulative  UInt64,             -- distinct children vaccinated UP TO and including this day.
+                                                        -- A true distinct count, not the sum of the bars.
+    refreshed_at                DateTime,
+
+    INDEX idx_dm_cdp_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, node_level, code, event_date)
+SETTINGS index_granularity = 8192;
+
+
+-- 26. dm_campaign_gender_breakdown
+-- Grain: one row per (tenant, campaign, boundary NODE), over the whole campaign
+-- (no date). Only nodes with at least one vaccination are present, as in 25.
+--
+-- Serves the overview gender section (health-campaign-services #2310): boys and
+-- girls vaccinated, the split between them, and an unknown count, following the
+-- hierarchical filter (#2309).
+--
+-- READING IT. Every node is its own row, rolled up from all its descendants, so
+-- the section is one row and nothing needs aggregating:
+--
+--     National : WHERE node_level = <campaign's root level>
+--     District : WHERE node_level = 3 AND level_two_code = :province
+--                                     AND level_three_code = :district
+--
+-- The path is left-packed exactly as in 25.
+--
+-- GENDER BUCKETS. silver gender is MALE / FEMALE / OTHER / ''. OTHER was
+-- recorded, so it gets its own column rather than being lumped into unknown;
+-- unknown is '' or any other value. The four buckets add up to
+-- total_vaccinated as long as no child carries two genders across its tasks
+-- (0 such children on the cluster when this was built); total_vaccinated is
+-- the true distinct count either way.
+--
+-- PERCENTAGES are the split BETWEEN boys and girls (their share of boys +
+-- girls), so the two always add to 100; both are 0 when there are neither.
+-- The unknown and other counts are shown beside them, not folded in.
+--
+-- HIDING THE SECTION. campaign_collects_gender is a CAMPAIGN-level flag
+-- repeated on every row: true if any vaccinated child anywhere in the campaign
+-- has a known gender (anything but ''). When it is false the dashboard hides
+-- the section. A district that happens to have only blanks inside a campaign
+-- that does collect gender still shows, with its unknown count.
+--
+-- "Vaccinated" is the administered predicate used everywhere else
+-- (13_kpi_queries.sql rule 4, mv_dm_campaign_coverage), on the distinct-
+-- beneficiary key of item 24, so total_vaccinated equals the coverage
+-- numerator at that node, with the same SUCCESS + VISITED caveat.
+CREATE TABLE IF NOT EXISTS dm_campaign_gender_breakdown (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    -- The node's root-to-node path (left-packed; empty below node_level)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    node_level                  UInt8,
+    code                        LowCardinality(String), -- the node's own code (level_<node_level>_code)
+
+    boys_vaccinated             UInt64,                 -- distinct children, gender MALE
+    girls_vaccinated            UInt64,                 -- distinct children, gender FEMALE
+    other_gender_vaccinated     UInt64,                 -- distinct children, gender OTHER
+    unknown_gender_vaccinated   UInt64,                 -- distinct children, gender '' or unrecognised
+    total_vaccinated            UInt64,                 -- distinct children, all genders; NOT the sum of the above by definition
+    boys_percent                Float64,                -- boys / (boys + girls) * 100
+    girls_percent               Float64,                -- girls / (boys + girls) * 100
+    campaign_collects_gender    Bool,                   -- campaign-level; false = hide the section
+    refreshed_at                DateTime,
+
+    INDEX idx_dm_cgb_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, node_level, code)
+SETTINGS index_granularity = 8192;
+
+
+-- 27. dm_zero_dose_daily_by_node
+-- Grain: one row per (tenant, campaign, boundary NODE, calendar day), for every
+-- day of the campaign window. Values are CUMULATIVE, so a day with no new
+-- identifications carries the previous day's numbers forward.
+--
+-- Serves the zero-dose map aggregated per health facility
+-- (health-campaign-services #2316): zero-dose count and zero-dose % of
+-- children enumerated per facility, with a campaign-day filter meaning "up to
+-- and including that day". Aggregating to facilities keeps individual
+-- children's GPS points off the map.
+--
+-- READING IT. A health facility is just a boundary level, and its depth
+-- differs by campaign (level 5 in the polio demo), so every node is present
+-- and the map picks the level:
+--
+--     WHERE campaign_number = :campaign AND node_level = :facility_level
+--       AND event_date = :selected_day
+--
+-- One row per facility. Facility names come from the localization dim at read
+-- time; like every mart, this stores codes only. The path is left-packed
+-- exactly as in 25.
+--
+-- DEFINITIONS.
+--   zero-dose   a child with a task answering receivedOPVBefore = NO (the ES
+--               Zero Dose page's definition). Every task status counts: a
+--               child who refused and never had OPV is exactly a zero-dose
+--               child.
+--   enumerated  a child with a task answering receivedOPVBefore YES or NO.
+--   child       (campaign_number, project_beneficiary_client_reference_id).
+--               Not the SMC key of items 11/23/24: a child is zero-dose once,
+--               whatever the task status or cycle.
+--   identified  on that task's task_dates (UTC date, as the DAGs write it).
+--
+-- A child with tasks giving different answers counts as zero-dose from the
+-- first day any task says NO; both columns are running unions of sets, never
+-- sums. receivedOPVBefore lives only in the task's raw additional_details
+-- ({"fields":[{key,value}],...}); a campaign that does not capture it has no
+-- rows, which is the cue to hide the zero-dose view.
+--
+-- THE WINDOW and the ACTIVE-NODES-ONLY rule are the same as in 25.
+CREATE TABLE IF NOT EXISTS dm_zero_dose_daily_by_node (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    -- The node's root-to-node path (left-packed; empty below node_level)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    node_level                  UInt8,
+    code                        LowCardinality(String), -- the node's own code (level_<node_level>_code)
+
+    event_date                  Date32,                 -- calendar date
+    campaign_day                UInt16,                 -- event_date - campaign start + 1
+
+    zero_dose_children_cumulative   UInt64,             -- distinct zero-dose children identified up to and including this day
+    children_enumerated_cumulative  UInt64,             -- distinct children enumerated up to and including this day
+    zero_dose_percent               Float64,            -- zero-dose / enumerated * 100; 0 when none enumerated
+    refreshed_at                DateTime,
+
+    INDEX idx_dm_zdd_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, node_level, code, event_date)
+SETTINGS index_granularity = 8192;
+
+
+-- 28. dm_missed_children_daily_by_node
+-- Grain: one row per (tenant, campaign, boundary NODE, calendar day), for every
+-- day of the campaign window, zeros included.
+--
+-- Serves the mop-up timeline (health-campaign-services #2324): children missed
+-- on a visit and children subsequently vaccinated, day by day, and how many
+-- are still outstanding -- is mop-up closing the gap?
+--
+-- READING IT. One node gives one row per day, nothing to aggregate:
+--
+--     WHERE campaign_number = :campaign AND node_level = :level AND code = :node
+--     ORDER BY event_date
+--
+-- children_outstanding on the window's last day is the outstanding count at
+-- campaign end. The path is left-packed exactly as in 25.
+--
+-- DEFINITIONS.
+--   missed task  administration_status BENEFICIARY_REFUSED or
+--                BENEFICIARY_ABSENT (real SMC data), or ADMINISTRATION_FAILED
+--                with `reason` REFUSED / ABSENCE in the raw additional_details
+--                (the ES shape). The typo status BENEFICIARY_REFUSED1 is NOT
+--                matched.
+--   child        (campaign_number, cycleIndex, project_beneficiary_client_reference_id)
+--                -- the SMC key without the status. The cycle matters: a child
+--                vaccinated in cycle 1 and absent in cycle 2 is missed for
+--                cycle 2 (over half of the real misses look like this).
+--   missed       counted ONCE, on the date of the child's FIRST miss. Further
+--                miss records are noted in repeat_miss_records_on_day and
+--                never add to the missed count.
+--   reached      the child's first ADMINISTRATION_SUCCESS / VISITED
+--                (delivered_to INDIVIDUAL) task AFTER the first miss, by task
+--                created_time -- so a revisit later the same day counts -- in
+--                the same cycle.
+--   dropped      a child vaccinated in the same cycle BEFORE their first miss
+--                was never a missed child.
+--   place        everything is counted at the boundary path of the child's
+--                first miss, reached included, so outstanding = missed -
+--                reached holds at every node and never goes negative.
+--
+-- WHY THIS DOES NOT BLOAT. Nothing is stored per child per day. At refresh
+-- each missed child collapses to two dates (first missed, first reached), and
+-- only the counts per node per day are stored: the same size as 25, whatever
+-- the number of children. Each child adds one event per date, so the counts are
+-- plain running sums, not distinct-count states.
+--
+-- THE WINDOW and the ACTIVE-NODES-ONLY rule (here: nodes with at least one
+-- missed child) are the same as in 25.
+CREATE TABLE IF NOT EXISTS dm_missed_children_daily_by_node (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    -- The node's root-to-node path (left-packed; empty below node_level)
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    node_level                  UInt8,
+    code                        LowCardinality(String), -- the node's own code (level_<node_level>_code)
+
+    event_date                  Date32,                 -- calendar date
+    campaign_day                UInt16,                 -- event_date - campaign start + 1
+
+    children_missed_on_day          UInt64,             -- children whose FIRST miss is this day
+    children_reached_on_day         UInt64,             -- missed children first vaccinated after the miss on this day
+    children_missed_cumulative      UInt64,             -- running sum of children_missed_on_day
+    children_reached_cumulative     UInt64,             -- running sum of children_reached_on_day
+    children_outstanding            UInt64,             -- missed cumulative - reached cumulative
+    repeat_miss_records_on_day      UInt64,             -- further miss records for already-missed children; NOT in the counts above
+    refreshed_at                DateTime,
+
+    INDEX idx_dm_mcd_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, node_level, code, event_date)
+SETTINGS index_granularity = 8192;
+
+
 -- 12. dm_smc_household_visited -- RETIRED, intentionally absent.
 --
 -- Held distinct households visited per (campaign, boundary path, date). It was
@@ -1189,7 +1493,7 @@ SETTINGS index_granularity = 8192;
 -- tables for the materialized views in 15_referral_marts.sql.
 --
 -- Engine choice: plain MergeTree, not ReplacingMergeTree. Each refresh
--- rebuilds the table wholesale (REFRESH EVERY 1 HOUR with no APPEND clause
+-- rebuilds the table wholesale (a refresh with no APPEND clause
 -- replaces the target's contents atomically), so there are never multiple
 -- versions of a row to collapse.
 --

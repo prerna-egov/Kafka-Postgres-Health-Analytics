@@ -125,7 +125,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- individual and day makes "distinct people present" exact; log_count exposes
 -- duplicate clock-outs rather than hiding them behind a distinct count.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_attendance
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_attendance
 AS
 SELECT
@@ -168,7 +168,7 @@ GROUP BY
 -- source for the incomplete-records metric, which needs ALL households, not
 -- just the oversized ones.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_household_registry
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_household_registry
 AS
 SELECT
@@ -203,7 +203,7 @@ GROUP BY
 -- zero records; the HF leg contributes records and an empty state. Summing the
 -- two legs per cell then yields both measures side by side.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_referral_summary
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_referral_summary
 AS
 SELECT
@@ -266,7 +266,7 @@ GROUP BY
 -- ingest timestamp -- see the table comment in 07 for why that matters on a
 -- backfilled load.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_suspected_fraud
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_suspected_fraud
 AS
 SELECT

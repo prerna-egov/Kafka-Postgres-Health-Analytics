@@ -149,7 +149,7 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- consumers match on it directly. (dm_stock_balance does normalize case,
 -- because it collapses the column away and has to decide.)
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_transactions
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_stock_transactions
 AS
 SELECT
@@ -207,7 +207,7 @@ GROUP BY
 -- genuine average; see the table comment in 07 for what happens if a
 -- facility's rows disagree.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_facility_points
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_stock_facility_points
 AS
 SELECT
@@ -258,7 +258,7 @@ GROUP BY
 -- client_last_modified_time is the right clock here: it is this table's own
 -- ReplacingMergeTree version column, and it is what the ES top_hits sorts on.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_reconciliation
-REFRESH EVERY 1 HOUR
+REFRESH EVERY 80 YEAR
 TO dm_stock_reconciliation
 AS
 SELECT
