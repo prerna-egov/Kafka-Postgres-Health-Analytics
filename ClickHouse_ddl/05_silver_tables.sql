@@ -82,6 +82,23 @@ ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
+-- Campaign-specific fields of household_entity: one row per (id, key). household_entity stays
+-- campaign-agnostic; every additionalFields key plus the derived keys (isVulnerable, cycleIndex) live here.
+-- value is plain text (JSON strings unquoted, numbers as text): cast on read.
+-- last_modified_time = household_entity.client_last_modified_time. A key dropped by a later version of the
+-- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
+CREATE TABLE IF NOT EXISTS household_campaign_field (
+    id                  String,                    -- household_entity.id
+    key                 LowCardinality(String),
+    value               String,
+    tenant_id           LowCardinality(String),
+    campaign_number     LowCardinality(String),
+    last_modified_time  Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id, key)
+SETTINGS index_granularity = 8192;
+
 CREATE TABLE IF NOT EXISTS household_member_entity (
     -- HouseholdMember core fields
     id                                      String,
@@ -157,6 +174,23 @@ ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
+-- Campaign-specific fields of household_member_entity: one row per (id, key). household_member_entity stays
+-- campaign-agnostic; every additionalFields key plus the derived keys (height, disabilityType, cycleIndex; household keys are in household_campaign_field) live here.
+-- value is plain text (JSON strings unquoted, numbers as text): cast on read.
+-- last_modified_time = household_member_entity.client_last_modified_time. A key dropped by a later version of the
+-- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
+CREATE TABLE IF NOT EXISTS household_member_campaign_field (
+    id                  String,                    -- household_member_entity.id
+    key                 LowCardinality(String),
+    value               String,
+    tenant_id           LowCardinality(String),
+    campaign_number     LowCardinality(String),
+    last_modified_time  Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id, key)
+SETTINGS index_granularity = 8192;
+
 
 CREATE TABLE IF NOT EXISTS project_beneficiary_entity (
     -- ProjectBeneficiary core fields
@@ -224,6 +258,23 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_entity (
 )
 ENGINE = ReplacingMergeTree(client_last_modified_time) 
 ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+-- Campaign-specific fields of project_beneficiary_entity: one row per (id, key). project_beneficiary_entity stays
+-- campaign-agnostic; every additionalFields key plus the derived keys (ageInMonths/gender backfill) live here.
+-- value is plain text (JSON strings unquoted, numbers as text): cast on read.
+-- last_modified_time = project_beneficiary_entity.client_last_modified_time. A key dropped by a later version of the
+-- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
+CREATE TABLE IF NOT EXISTS project_beneficiary_campaign_field (
+    id                  String,                    -- project_beneficiary_entity.id
+    key                 LowCardinality(String),
+    value               String,
+    tenant_id           LowCardinality(String),
+    campaign_number     LowCardinality(String),
+    last_modified_time  Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id, key)
 SETTINGS index_granularity = 8192;
 
 
@@ -400,6 +451,23 @@ CREATE TABLE IF NOT EXISTS stock_entity (
 )
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+-- Campaign-specific fields of stock_entity: one row per (id, key). stock_entity stays
+-- campaign-agnostic; every additionalFields key plus the derived keys (cycleIndex, facilityTarget) live here.
+-- value is plain text (JSON strings unquoted, numbers as text): cast on read.
+-- last_modified_time = stock_entity.last_modified_time (the client last-modified time). A key dropped by a later version of the
+-- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
+CREATE TABLE IF NOT EXISTS stock_campaign_field (
+    id                  String,                    -- stock_entity.id
+    key                 LowCardinality(String),
+    value               String,
+    tenant_id           LowCardinality(String),
+    campaign_number     LowCardinality(String),
+    last_modified_time  Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id, key)
 SETTINGS index_granularity = 8192;
 
 
@@ -625,7 +693,7 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
     hierarchy_type                      LowCardinality(String),
 
     --Beneficiary Info
-    --TODO: add default values
+    --TODO: remove beneficiary info from project task entity table
     age                                     UInt32,
     gender                                  LowCardinality(String),
     date_of_birth                           Date32,
@@ -652,6 +720,23 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
 ) 
 ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
+SETTINGS index_granularity = 8192;
+
+-- Campaign-specific fields of project_task_entity: one row per (id, key). project_task_entity stays
+-- campaign-agnostic; every additionalFields key plus the derived keys (cycleIndex, doseIndex) live here.
+-- value is plain text (JSON strings unquoted, numbers as text): cast on read.
+-- last_modified_time = project_task_entity.last_modified_time (the client last-modified time). A key dropped by a later version of the
+-- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
+CREATE TABLE IF NOT EXISTS project_task_campaign_field (
+    id                  String,                    -- project_task_entity.id
+    key                 LowCardinality(String),
+    value               String,
+    tenant_id           LowCardinality(String),
+    campaign_number     LowCardinality(String),
+    last_modified_time  Int64
+)
+ENGINE = ReplacingMergeTree(last_modified_time)
+ORDER BY (id, key)
 SETTINGS index_granularity = 8192;
 
 
