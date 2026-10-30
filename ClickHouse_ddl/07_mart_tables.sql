@@ -1594,3 +1594,24 @@ ENGINE = MergeTree
 ORDER BY (tenant_id, campaign_number, checklist_name, role, event_date)
 SETTINGS index_granularity = 8192;
 
+
+-- ==========================================================================
+-- CAMPAIGN-FIELD MART TABLE DEFINITIONS
+--
+-- Targets for the materialized views in 16_campaign_field_marts.sql: the
+-- marts that read campaign-specific values, rebuilt on the
+-- <entity>_campaign_field child tables. Each is an exact copy (columns,
+-- engine, ORDER BY) of the original table named after AS, so old and new
+-- outputs compare column for column until cutover. Create these AFTER the
+-- originals above and BEFORE 16_campaign_field_marts.sql.
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS dm_smc_administered_base_cf AS dm_smc_administered_base;
+CREATE TABLE IF NOT EXISTS dm_smc_administered_by_beneficiary_cf AS dm_smc_administered_by_beneficiary;
+CREATE TABLE IF NOT EXISTS dm_smc_administered_by_campaign_cf AS dm_smc_administered_by_campaign;
+CREATE TABLE IF NOT EXISTS dm_campaign_gender_breakdown_cf AS dm_campaign_gender_breakdown;
+CREATE TABLE IF NOT EXISTS dm_campaign_daily_progress_cf AS dm_campaign_daily_progress;
+CREATE TABLE IF NOT EXISTS dm_campaign_coverage_cf AS dm_campaign_coverage;
+CREATE TABLE IF NOT EXISTS dm_zero_dose_daily_by_node_cf AS dm_zero_dose_daily_by_node;
+CREATE TABLE IF NOT EXISTS dm_missed_children_daily_by_node_cf AS dm_missed_children_daily_by_node;
+CREATE TABLE IF NOT EXISTS dm_stock_facility_points_cf AS dm_stock_facility_points;

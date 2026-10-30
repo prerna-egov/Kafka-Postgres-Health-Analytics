@@ -36,6 +36,7 @@ from sql_flatten_common import (  # noqa: E402
     address_join_sql,
     boundary_lookup,
     build_sql_test_dag,
+    campaign_field_rows_sql,
     cycle_index_expressions,
     json_int_or_zero_sql,
     json_object_sql,
@@ -184,6 +185,10 @@ def helper_expressions(f: HouseholdSliceFilter) -> list[tuple[str, str]]:
          "arrayConcat(unique_field_pairs, if(is_vulnerable, [('isVulnerable', 'true')], []), "
          "[('cycleIndex', cycle_index_json)])"),
         ("additional_details_json", json_object_sql("additional_details_pairs")),
+        # household_campaign_field rows: every key of the derived blob, cycleIndex as a number
+        ("campaign_field_pairs",
+         "arrayConcat(unique_field_pairs, if(is_vulnerable, [('isVulnerable', 'true')], []), "
+         "[('cycleIndex', cycle_index_number_json)])"),
     ]
 
 
@@ -251,6 +256,9 @@ SPEC = EntitySpec(
             boundary_lookup(boundary_keys_sql, code_expr="joined.address_locality_code"),
             user_lookup(user_keys_sql, user_expr="joined.created_by"),
         ),
+        # campaign-specific keys -> household_campaign_field, written from the same computed slice
+        campaign_fields=campaign_field_rows_sql("campaign_field_pairs"),
+        campaign_version_column="client_last_modified_time",
     ),
 )
 

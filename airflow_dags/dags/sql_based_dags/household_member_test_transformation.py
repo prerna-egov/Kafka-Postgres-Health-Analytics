@@ -41,6 +41,7 @@ from sql_flatten_common import (  # noqa: E402
     age_expressions,
     boundary_lookup,
     build_sql_test_dag,
+    campaign_field_rows_sql,
     cycle_index_expressions,
     field_pairs_sql,
     json_int_or_null_sql,
@@ -229,6 +230,10 @@ def helper_expressions(f: HouseholdMemberSliceFilter) -> list[tuple[str, str]]:
         ("additional_details_pairs",
          "arrayConcat(household_pairs, member_pairs, individual_extra_pairs, [('cycleIndex', cycle_index_json)])"),
         ("additional_details_json", json_object_sql("additional_details_pairs")),
+        # household_member_campaign_field rows: the member's own keys, the individual extras and
+        # cycleIndex (as a number) -- the household's keys are household_campaign_field's (join on household_id)
+        ("campaign_field_pairs",
+         "arrayConcat(member_pairs, individual_extra_pairs, [('cycleIndex', cycle_index_number_json)])"),
         # date_of_birth / age / gender only when the individual row was found (see the module docstring)
         ("individual_known", "joined.individual_matched"),
         *age_expressions("joined.individual_date_of_birth"),
@@ -301,6 +306,9 @@ SPEC = EntitySpec(
             boundary_lookup(boundary_keys_sql, code_expr="joined.address_locality_code"),
             user_lookup(user_keys_sql, user_expr="joined.client_last_modified_by"),
         ),
+        # campaign-specific keys -> household_member_campaign_field, written from the same computed slice
+        campaign_fields=campaign_field_rows_sql("campaign_field_pairs"),
+        campaign_version_column="client_last_modified_time",
     ),
 )
 
