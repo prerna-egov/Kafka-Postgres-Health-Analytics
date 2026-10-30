@@ -1,13 +1,14 @@
 """
-bill_detail_test_transformation.py
+bill_detail_transformation.py
 
-TEST twin of bill_detail_transformation.py for the `bill_detail` entity
+Production bronze-to-silver DAG replacing the Python bill_detail_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `bill_detail` entity
 (expense bill details): the flatten + write runs inside ClickHouse as one
 INSERT ... SELECT per slice (see sql_flatten_common.py for how a run works).
-Writes to <database>.bill_detail_entity_sql_test, never to bill_detail_entity.
-Entity name `bill_detail_test` (dag_id bill_detail_test_transformation).
+Writes to <database>.bill_detail_entity.
+dag_id bill_detail_transformation.
 
-Known differences from bill_detail_transformation.py (all deliberate)
+Known differences from the Python bill_detail_transformation.py (all deliberate)
     - stg_expense_billdetail is read with FINAL (the Python DAG reads every version).
     - line_items / payable_line_items are built in SQL, sorted by line item id,
       with amount / paidAmount written as plain decimal numbers. The Python
@@ -33,7 +34,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     json_string_sql,
     own_key_join_sql,
     project_join_sql,
@@ -308,8 +309,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="bill_detail_test",
-    python_entity="bill_detail",
+    entity="bill_detail",
     driving_table="stg_expense_billdetail",
     slice_filter_class=BillDetailSliceFilter,
     target=SilverTarget(
@@ -328,4 +328,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

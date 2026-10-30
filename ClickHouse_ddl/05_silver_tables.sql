@@ -62,9 +62,6 @@ CREATE TABLE IF NOT EXISTS household_entity (
     geo_point_lat                   Float64,
     geo_point_lon                   Float64,
 
-    -- Mapped from ObjectNode
-    additional_details              String,
-
     -- ==========================================
     -- EXTRA FIELDS 
     -- ==========================================
@@ -82,22 +79,26 @@ ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Campaign-specific fields of household_entity: one row per (id, key). household_entity stays
+-- Campaign-specific fields of household_entity: one row per (id, key); the ONLY place they are stored, so household_entity stays
 -- campaign-agnostic; every additionalFields key plus the derived keys (isVulnerable, cycleIndex) live here.
 -- Each value is typed by the transformation into exactly one value_* column (value_type names it); the
--- other three hold defaults: value_string 'NOT_APPLICABLE', value_number 0, value_date 1970-01-01,
--- value_bool false. Rule: true/false -> bool; plain number (no leading zero; integers <= 15 digits) -> number;
--- YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- transformation sends NULL (value_array: []) for the other four, which then take their column DEFAULT.
+-- Rule: true/false -> bool; JSON array (or a string holding one) -> array, one text per element (strings unquoted, others their JSON text);
+-- plain number (no leading zero; integers <= 15 digits) -> number; YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- Existing tables: ALTER TABLE <table> ADD COLUMN IF NOT EXISTS value_array Array(String) DEFAULT [] AFTER value_bool;
+-- Existing databases (columns that held these values before the cutover):
+--   ALTER TABLE household_entity DROP COLUMN IF EXISTS additional_details;
 -- last_modified_time = household_entity.client_last_modified_time. A key dropped by a later version of the
 -- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
 CREATE TABLE IF NOT EXISTS household_campaign_field (
     id                  String,                    -- household_entity.id
     key                 LowCardinality(String),
-    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool'
-    value_string        String,                    -- 'NOT_APPLICABLE' unless value_type = 'string'
-    value_number        Float64,                   -- 0 unless value_type = 'number'
-    value_date          Date32,                    -- 1970-01-01 unless value_type = 'date' (Date32: dates before 1970 occur)
-    value_bool          Bool,                      -- false unless value_type = 'bool'
+    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool' | 'array'
+    value_string        String  DEFAULT 'NOT_APPLICABLE',  -- unless value_type = 'string'
+    value_number        Float64 DEFAULT 0,                 -- unless value_type = 'number'
+    value_date          Date32  DEFAULT '1970-01-01',      -- unless value_type = 'date' (Date32: dates before 1970 occur)
+    value_bool          Bool    DEFAULT false,             -- unless value_type = 'bool'
+    value_array         Array(String) DEFAULT [],          -- unless value_type = 'array'
     tenant_id           LowCardinality(String),
     campaign_number     LowCardinality(String),
     last_modified_time  Int64
@@ -162,7 +163,6 @@ CREATE TABLE IF NOT EXISTS household_member_entity (
     geo_point_lat                           Float64,
     geo_point_lon                           Float64,
     boundary_code                           LowCardinality(String),
-    additional_details                      String, -- JSON stored as String
 
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
@@ -181,22 +181,26 @@ ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Campaign-specific fields of household_member_entity: one row per (id, key). household_member_entity stays
+-- Campaign-specific fields of household_member_entity: one row per (id, key); the ONLY place they are stored, so household_member_entity stays
 -- campaign-agnostic; every additionalFields key plus the derived keys (height, disabilityType, cycleIndex; household keys are in household_campaign_field) live here.
 -- Each value is typed by the transformation into exactly one value_* column (value_type names it); the
--- other three hold defaults: value_string 'NOT_APPLICABLE', value_number 0, value_date 1970-01-01,
--- value_bool false. Rule: true/false -> bool; plain number (no leading zero; integers <= 15 digits) -> number;
--- YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- transformation sends NULL (value_array: []) for the other four, which then take their column DEFAULT.
+-- Rule: true/false -> bool; JSON array (or a string holding one) -> array, one text per element (strings unquoted, others their JSON text);
+-- plain number (no leading zero; integers <= 15 digits) -> number; YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- Existing tables: ALTER TABLE <table> ADD COLUMN IF NOT EXISTS value_array Array(String) DEFAULT [] AFTER value_bool;
+-- Existing databases (columns that held these values before the cutover):
+--   ALTER TABLE household_member_entity DROP COLUMN IF EXISTS additional_details;
 -- last_modified_time = household_member_entity.client_last_modified_time. A key dropped by a later version of the
 -- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
 CREATE TABLE IF NOT EXISTS household_member_campaign_field (
     id                  String,                    -- household_member_entity.id
     key                 LowCardinality(String),
-    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool'
-    value_string        String,                    -- 'NOT_APPLICABLE' unless value_type = 'string'
-    value_number        Float64,                   -- 0 unless value_type = 'number'
-    value_date          Date32,                    -- 1970-01-01 unless value_type = 'date' (Date32: dates before 1970 occur)
-    value_bool          Bool,                      -- false unless value_type = 'bool'
+    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool' | 'array'
+    value_string        String  DEFAULT 'NOT_APPLICABLE',  -- unless value_type = 'string'
+    value_number        Float64 DEFAULT 0,                 -- unless value_type = 'number'
+    value_date          Date32  DEFAULT '1970-01-01',      -- unless value_type = 'date' (Date32: dates before 1970 occur)
+    value_bool          Bool    DEFAULT false,             -- unless value_type = 'bool'
+    value_array         Array(String) DEFAULT [],          -- unless value_type = 'array'
     tenant_id           LowCardinality(String),
     campaign_number     LowCardinality(String),
     last_modified_time  Int64
@@ -256,7 +260,6 @@ CREATE TABLE IF NOT EXISTS project_beneficiary_entity (
     task_dates                              Date32,
     synced_date                             Date32,
     synced_time_stamp                       DateTime64(3, 'UTC'),
-    additional_details                      String, -- JSON stored as String
 
     -- ==========================================
     -- EXTRA FIELDS USED BY TRANSFORMER
@@ -274,22 +277,26 @@ ENGINE = ReplacingMergeTree(client_last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Campaign-specific fields of project_beneficiary_entity: one row per (id, key). project_beneficiary_entity stays
+-- Campaign-specific fields of project_beneficiary_entity: one row per (id, key); the ONLY place they are stored, so project_beneficiary_entity stays
 -- campaign-agnostic; every additionalFields key plus the derived keys (ageInMonths/gender backfill) live here.
 -- Each value is typed by the transformation into exactly one value_* column (value_type names it); the
--- other three hold defaults: value_string 'NOT_APPLICABLE', value_number 0, value_date 1970-01-01,
--- value_bool false. Rule: true/false -> bool; plain number (no leading zero; integers <= 15 digits) -> number;
--- YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- transformation sends NULL (value_array: []) for the other four, which then take their column DEFAULT.
+-- Rule: true/false -> bool; JSON array (or a string holding one) -> array, one text per element (strings unquoted, others their JSON text);
+-- plain number (no leading zero; integers <= 15 digits) -> number; YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- Existing tables: ALTER TABLE <table> ADD COLUMN IF NOT EXISTS value_array Array(String) DEFAULT [] AFTER value_bool;
+-- Existing databases (columns that held these values before the cutover):
+--   ALTER TABLE project_beneficiary_entity DROP COLUMN IF EXISTS additional_details;
 -- last_modified_time = project_beneficiary_entity.client_last_modified_time. A key dropped by a later version of the
 -- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
 CREATE TABLE IF NOT EXISTS project_beneficiary_campaign_field (
     id                  String,                    -- project_beneficiary_entity.id
     key                 LowCardinality(String),
-    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool'
-    value_string        String,                    -- 'NOT_APPLICABLE' unless value_type = 'string'
-    value_number        Float64,                   -- 0 unless value_type = 'number'
-    value_date          Date32,                    -- 1970-01-01 unless value_type = 'date' (Date32: dates before 1970 occur)
-    value_bool          Bool,                      -- false unless value_type = 'bool'
+    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool' | 'array'
+    value_string        String  DEFAULT 'NOT_APPLICABLE',  -- unless value_type = 'string'
+    value_number        Float64 DEFAULT 0,                 -- unless value_type = 'number'
+    value_date          Date32  DEFAULT '1970-01-01',      -- unless value_type = 'date' (Date32: dates before 1970 occur)
+    value_bool          Bool    DEFAULT false,             -- unless value_type = 'bool'
+    value_array         Array(String) DEFAULT [],          -- unless value_type = 'array'
     tenant_id           LowCardinality(String),
     campaign_number     LowCardinality(String),
     last_modified_time  Int64
@@ -453,10 +460,8 @@ CREATE TABLE IF NOT EXISTS stock_entity (
     transacting_facility_type         LowCardinality(String),
     facility_level                    LowCardinality(String),
     transacting_facility_level        LowCardinality(String),
-    facility_target                   Int64,
     task_dates                        Date32,
     synced_date                       Date32,
-    additional_details                String,
     waybill_number                    String,
     project_id                        String,
     project_type                      LowCardinality(String),
@@ -474,22 +479,26 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Campaign-specific fields of stock_entity: one row per (id, key). stock_entity stays
+-- Campaign-specific fields of stock_entity: one row per (id, key); the ONLY place they are stored, so stock_entity stays
 -- campaign-agnostic; every additionalFields key plus the derived keys (cycleIndex, facilityTarget) live here.
 -- Each value is typed by the transformation into exactly one value_* column (value_type names it); the
--- other three hold defaults: value_string 'NOT_APPLICABLE', value_number 0, value_date 1970-01-01,
--- value_bool false. Rule: true/false -> bool; plain number (no leading zero; integers <= 15 digits) -> number;
--- YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- transformation sends NULL (value_array: []) for the other four, which then take their column DEFAULT.
+-- Rule: true/false -> bool; JSON array (or a string holding one) -> array, one text per element (strings unquoted, others their JSON text);
+-- plain number (no leading zero; integers <= 15 digits) -> number; YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- Existing tables: ALTER TABLE <table> ADD COLUMN IF NOT EXISTS value_array Array(String) DEFAULT [] AFTER value_bool;
+-- Existing databases (columns that held these values before the cutover):
+--   ALTER TABLE stock_entity DROP COLUMN IF EXISTS facility_target, DROP COLUMN IF EXISTS additional_details;
 -- last_modified_time = stock_entity.last_modified_time (the client last-modified time). A key dropped by a later version of the
 -- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
 CREATE TABLE IF NOT EXISTS stock_campaign_field (
     id                  String,                    -- stock_entity.id
     key                 LowCardinality(String),
-    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool'
-    value_string        String,                    -- 'NOT_APPLICABLE' unless value_type = 'string'
-    value_number        Float64,                   -- 0 unless value_type = 'number'
-    value_date          Date32,                    -- 1970-01-01 unless value_type = 'date' (Date32: dates before 1970 occur)
-    value_bool          Bool,                      -- false unless value_type = 'bool'
+    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool' | 'array'
+    value_string        String  DEFAULT 'NOT_APPLICABLE',  -- unless value_type = 'string'
+    value_number        Float64 DEFAULT 0,                 -- unless value_type = 'number'
+    value_date          Date32  DEFAULT '1970-01-01',      -- unless value_type = 'date' (Date32: dates before 1970 occur)
+    value_bool          Bool    DEFAULT false,             -- unless value_type = 'bool'
+    value_array         Array(String) DEFAULT [],          -- unless value_type = 'array'
     tenant_id           LowCardinality(String),
     campaign_number     LowCardinality(String),
     last_modified_time  Int64
@@ -720,21 +729,11 @@ CREATE TABLE IF NOT EXISTS project_task_entity (
 
     hierarchy_type                      LowCardinality(String),
 
-    --Beneficiary Info
-    --TODO: remove beneficiary info from project task entity table
-    age                                     UInt32,
-    gender                                  LowCardinality(String),
-    date_of_birth                           Date32,
-
-    cycleIndex                              UInt8,
-    doseIndex                               UInt8,
-    delivery_strategy                       LowCardinality(String),
-
     synced_time_stamp                       DateTime64(3, 'UTC'),
     synced_date                             Date32,
     synced_time                             Int64,
     task_dates                              Date32,
-    additional_details                      String,
+    additional_details                      String,  -- stg_project_task.additional_details as received (raw JSON)
     project_id                              String,
     project_type                            LowCardinality(String),
     project_type_id                         String,
@@ -750,24 +749,29 @@ ENGINE = ReplacingMergeTree(last_modified_time)
 ORDER BY (tenant_id, id)
 SETTINGS index_granularity = 8192;
 
--- Campaign-specific fields of project_task_entity: one row per (id, key). project_task_entity stays
+-- Campaign-specific fields of project_task_entity: one row per (id, key); the ONLY place they are stored, so project_task_entity stays
 -- campaign-agnostic; every additionalFields key plus the derived keys live here: cycleIndex, doseIndex, and
 -- the beneficiary of the project's type -- individual: age (months), gender, dateOfBirth, individualId;
 -- household: householdId, memberCount.
 -- Each value is typed by the transformation into exactly one value_* column (value_type names it); the
--- other three hold defaults: value_string 'NOT_APPLICABLE', value_number 0, value_date 1970-01-01,
--- value_bool false. Rule: true/false -> bool; plain number (no leading zero; integers <= 15 digits) -> number;
--- YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- transformation sends NULL (value_array: []) for the other four, which then take their column DEFAULT.
+-- Rule: true/false -> bool; JSON array (or a string holding one) -> array, one text per element (strings unquoted, others their JSON text);
+-- plain number (no leading zero; integers <= 15 digits) -> number; YYYY-MM-DD -> date; anything else (zero-padded text, datetime text, JSON objects) -> string.
+-- Existing tables: ALTER TABLE <table> ADD COLUMN IF NOT EXISTS value_array Array(String) DEFAULT [] AFTER value_bool;
+-- Existing databases (columns that held these values before the cutover):
+--   ALTER TABLE project_task_entity DROP COLUMN IF EXISTS age, DROP COLUMN IF EXISTS gender, DROP COLUMN IF EXISTS date_of_birth,
+--   DROP COLUMN IF EXISTS cycleIndex, DROP COLUMN IF EXISTS doseIndex, DROP COLUMN IF EXISTS delivery_strategy;
 -- last_modified_time = project_task_entity.last_modified_time (the client last-modified time). A key dropped by a later version of the
 -- record is NOT removed here, so readers keep only rows whose last_modified_time equals the parent's.
 CREATE TABLE IF NOT EXISTS project_task_campaign_field (
     id                  String,                    -- project_task_entity.id
     key                 LowCardinality(String),
-    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool'
-    value_string        String,                    -- 'NOT_APPLICABLE' unless value_type = 'string'
-    value_number        Float64,                   -- 0 unless value_type = 'number'
-    value_date          Date32,                    -- 1970-01-01 unless value_type = 'date' (Date32: dates before 1970 occur)
-    value_bool          Bool,                      -- false unless value_type = 'bool'
+    value_type          LowCardinality(String),    -- 'string' | 'number' | 'date' | 'bool' | 'array'
+    value_string        String  DEFAULT 'NOT_APPLICABLE',  -- unless value_type = 'string'
+    value_number        Float64 DEFAULT 0,                 -- unless value_type = 'number'
+    value_date          Date32  DEFAULT '1970-01-01',      -- unless value_type = 'date' (Date32: dates before 1970 occur)
+    value_bool          Bool    DEFAULT false,             -- unless value_type = 'bool'
+    value_array         Array(String) DEFAULT [],          -- unless value_type = 'array'
     tenant_id           LowCardinality(String),
     campaign_number     LowCardinality(String),
     last_modified_time  Int64

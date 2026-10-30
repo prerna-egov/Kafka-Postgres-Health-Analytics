@@ -1,13 +1,13 @@
 """
-stock_reconciliation_test_transformation.py
+stock_reconciliation_transformation.py
 
-TEST twin of stock_reconciliation_transformation.py for the
+Production bronze-to-silver DAG replacing the Python stock_reconciliation_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the
 `stock_reconciliation` entity: the flatten + write runs inside ClickHouse as
 one INSERT ... SELECT per slice (see sql_flatten_common.py for how a run
-works). Writes to <database>.stock_reconciliation_entity_sql_test, never to
-stock_reconciliation_entity. Entity name `stock_reconciliation_test`.
+works). Writes to <database>.stock_reconciliation_entity. Entity name `stock_reconciliation_test`.
 
-Known differences from stock_reconciliation_transformation.py (all deliberate)
+Known differences from the Python stock_reconciliation_transformation.py (all deliberate)
     - stg_stock_reconciliation is read with FINAL (the Python DAG reads every
       version and relies on the silver table's own ReplacingMergeTree).
     - stg_project_address is read through 14's prj_by_project as one boundary
@@ -28,7 +28,7 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     address_join_sql,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     json_double_or_null_sql,
     json_int_or_zero_sql,
     json_object_sql,
@@ -263,8 +263,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="stock_reconciliation_test",
-    python_entity="stock_reconciliation",
+    entity="stock_reconciliation",
     driving_table="stg_stock_reconciliation",
     slice_filter_class=StockReconciliationSliceFilter,
     target=SilverTarget(
@@ -281,4 +280,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

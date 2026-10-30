@@ -1,13 +1,13 @@
 """
-user_action_test_transformation.py
+user_action_transformation.py
 
-TEST twin of user_action_transformation.py for the `user_action` entity: the
+Production bronze-to-silver DAG replacing the Python user_action_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `user_action` entity: the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.user_action_entity_sql_test, never to user_action_entity.
-Entity name `user_action_test` (dag_id user_action_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.user_action_entity.
+dag_id user_action_transformation.
 
-Known differences from user_action_transformation.py (all deliberate)
+Known differences from the Python user_action_transformation.py (all deliberate)
     - stg_user_action is read with FINAL (the Python DAG reads every version and
       relies on the silver table's own ReplacingMergeTree to collapse them).
     - now() is evaluated once per statement; a row that fails to build aborts
@@ -28,7 +28,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     json_loads_or_string_sql,
     json_object_sql,
     project_join_sql,
@@ -174,8 +174,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="user_action_test",
-    python_entity="user_action",
+    entity="user_action",
     driving_table="stg_user_action",
     slice_filter_class=UserActionSliceFilter,
     target=SilverTarget(
@@ -192,4 +191,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

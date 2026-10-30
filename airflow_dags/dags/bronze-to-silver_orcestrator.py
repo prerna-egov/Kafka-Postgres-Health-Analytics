@@ -64,7 +64,8 @@ def _dag_id_for_entity(entity: str) -> str:
     """
     Single source of truth for the entity -> dag_id mapping.
     The mapping between the entity and the dag_id is : dag_id = {entity_name}_transformation
-    For example: entity = project_task then the dag_id/python file name has to be project_task_transformation
+    For example: entity = project_task then the dag_id has to be project_task_transformation
+    (dags/sql_based_dags/project_task_transformation.py)
     """
     return f"{entity}{DAG_ID_SUFFIX}"
 

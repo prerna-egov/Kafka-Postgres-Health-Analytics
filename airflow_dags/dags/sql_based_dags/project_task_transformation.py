@@ -1,11 +1,11 @@
 """
-project_task_test_transformation.py
+project_task_transformation.py
 
-TEST twin of project_task_transformation.py for the `project_task` entity:
+Production bronze-to-silver DAG replacing the Python project_task_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `project_task` entity:
 the flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.project_task_entity_sql_test, never to project_task_entity.
-Entity name `project_task_test` (dag_id project_task_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.project_task_entity.
+dag_id project_task_transformation.
 
 Measurements: airflow_dags/PROJECTION_COMPARISON_REPORT.md sections 8-8c (at
 ~1 M tasks the Python DAG is killed by the ClickHouse pod's memory limit; this
@@ -18,14 +18,16 @@ tables onto every row; here each right side is a projection point lookup
 bounded to the slice's own beneficiary refs, and the branch is chosen per
 row in the column expressions.
 
-Known differences from project_task_transformation.py (all deliberate)
+Known differences from the Python project_task_transformation.py (all deliberate)
     - The bridge, household and individual sides are ONE row per
       client_reference_id (newest version, ties by id); the Python DAG's
       "last writer wins" in undefined result order.
     - stg_project_address is one boundary per project (14's prj_by_project).
-    - age / date_of_birth / gender are blank when the individual is not found;
-      the Python DAG writes age 680 there since stg_individual.date_of_birth
-      became a non-nullable Date32 (§8c).
+    - The campaign-specific values (additionalDetails fields, cycleIndex, doseIndex
+      and the individual's age / gender / dateOfBirth) are not silver columns: they
+      are project_task_campaign_field rows (the raw additional_details blob stays). age / gender / dateOfBirth are left out
+      when the individual is not found; the Python DAG wrote age 680 there since
+      stg_individual.date_of_birth became a non-nullable Date32 (§8c).
     - now() is evaluated once per statement; a row that fails to build aborts
       the slice instead of being skipped with a log line.
 """
@@ -42,7 +44,10 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     address_join_sql,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
+    campaign_field_rows_sql,
+    field_pairs_sql,
+    json_string_sql,
     one_row_per_key_sql,
     project_address_join_sql,
     project_join_sql,
@@ -74,7 +79,7 @@ from sql_flatten_common import (  # noqa: E402
 #                                                  (14's prj_by_client_ref, ONE row per task-side ref)
 #   stg_household                 household        household.client_reference_id = beneficiary ref          member_count   (HOUSEHOLD projects only)
 #                                                  AND tenant (prj_by_client_ref, one row per ref)
-#   stg_individual                individual       individual.client_reference_id = beneficiary ref         date_of_birth, gender, age (INDIVIDUAL only)
+#   stg_individual                individual       individual.client_reference_id = beneficiary ref         child keys dateOfBirth, gender, age (INDIVIDUAL only)
 #                                                  AND tenant (prj_by_client_ref, one row per ref)
 #   boundary-service response     levels           (tenant_id, hierarchy_type, lookup boundary code)        level_one_code .. level_nine_code
 #   user-service response         users            (tenant_id, client_created_by)                           user_name, name_of_user, role, user_address
@@ -279,7 +284,6 @@ def helper_expressions(f: ProjectTaskSliceFilter) -> list[tuple[str, str]]:
         ("task_fields",
          "arrayMap(f -> (JSONExtractString(f, 'key'), JSONExtractString(f, 'value')), "
          "arrayFilter(f -> JSONHas(f, 'key'), JSONExtractArrayRaw(joined.additional_details, 'fields')))"),
-        ("field_delivery_strategy",  "arrayLast(t -> t.1 = 'deliveryStrategy', task_fields).2"),
         ("field_cycle_index",        "arrayLast(t -> t.1 = 'cycleIndex', task_fields).2"),
         ("field_dose_index",         "arrayLast(t -> t.1 = 'doseIndex', task_fields).2"),
         ("field_product_variant_id", "arrayLast(t -> t.1 = 'productVariantId', task_fields).2"),
@@ -327,6 +331,21 @@ def helper_expressions(f: ProjectTaskSliceFilter) -> list[tuple[str, str]]:
          "computed_cycle_index BETWEEN 0 AND 255, computed_cycle_index, toInt64(0))"),
         ("dose_index_value",
          "if(is_individual_project AND parsed_dose_index BETWEEN 0 AND 255, parsed_dose_index, toInt64(0))"),
+        # project_task_campaign_field rows: the task's fields as JSON tokens (task_fields above loses
+        # non-string values), then the resolved cycleIndex / doseIndex in place of the raw keys, then
+        # the beneficiary details of the project's beneficiary type -- an individual's age (months),
+        # gender, dateOfBirth and individualId, or a household's householdId and memberCount
+        ("campaign_field_pairs",
+         f"arrayConcat({field_pairs_sql('joined.additional_details')}, "
+         "[('cycleIndex', toString(cycle_index_value)), ('doseIndex', toString(dose_index_value))], "
+         f"if(is_individual_project AND beneficiary_found, [('individualId', {json_string_sql('joined.beneficiary_ref')})], []), "
+         "if(individual_known, ["
+         "('age', toString(greatest(toInt64(0), age_months))), "
+         f"('gender', {json_string_sql('joined.individual_gender')}), "
+         f"('dateOfBirth', {json_string_sql('toString(joined.individual_date_of_birth)')})], []), "
+         "if(is_household_project AND beneficiary_found, ["
+         f"('householdId', {json_string_sql('joined.beneficiary_ref')}), "
+         "('memberCount', toString(joined.household_member_count))], []))"),
 
         # geo_point = json.dumps([longitude, latitude]); Python prints integral floats as 12.0
         ("lon_json", python_float_text_sql("joined.address_longitude")),
@@ -376,20 +395,12 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
     *[(column, f"levels.{column}") for column in LEVEL_COLUMNS],
     # all-or-nothing with the levels: blank unless a lookup key existed (= attach_boundary_levels)
     ("hierarchy_type", "if(joined.lookup_boundary_code != '', joined.hierarchy_type, '')"),
-    ("age", "if(individual_known, toUInt32(greatest(toInt64(0), age_months)), toUInt32(0))"),
-    ("gender", "if(individual_known, joined.individual_gender, '')"),
-    # via Int32 days: a plain if() between a Date32 join column and a Date32 constant hits a
-    # ClickHouse LOGICAL_ERROR ("Cannot get native value for column with type Date32") on some blocks
-    ("date_of_birth",
-     "toDate32(if(individual_known, ifNull(toInt32(joined.individual_date_of_birth), toInt32(0)), toInt32(0)))"),
-    ("cycleIndex", "toUInt8(cycle_index_value)"),
-    ("doseIndex", "toUInt8(dose_index_value)"),
-    ("delivery_strategy", "field_delivery_strategy"),
     # server timestamps for the synced_* columns, client timestamp for task_dates; 0 -> epoch defaults
     ("synced_time_stamp", "fromUnixTimestamp64Milli(joined.created_time, 'UTC')"),
     ("synced_date", "toDate32(fromUnixTimestamp64Milli(joined.last_modified_time, 'UTC'))"),
     ("synced_time", "joined.last_modified_time"),
     ("task_dates", "toDate32(fromUnixTimestamp64Milli(joined.client_last_modified_time, 'UTC'))"),
+    # the bronze blob as received; its keys are also typed into project_task_campaign_field
     ("additional_details", "joined.additional_details"),
     ("project_id", "joined.project_id"),
     ("project_type", "joined.project_type"),
@@ -401,8 +412,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="project_task_test",
-    python_entity="project_task",
+    entity="project_task",
     driving_table="stg_project_task",
     slice_filter_class=ProjectTaskSliceFilter,
     target=SilverTarget(
@@ -414,9 +424,12 @@ SPEC = EntitySpec(
             boundary_lookup(boundary_keys_sql, code_expr="joined.lookup_boundary_code"),
             user_lookup(user_keys_sql, user_expr="joined.client_created_by"),
         ),
+        # campaign-specific keys -> project_task_campaign_field, written from the same computed slice
+        campaign_fields=campaign_field_rows_sql("campaign_field_pairs"),
+        campaign_version_column="last_modified_time",
     ),
 )
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

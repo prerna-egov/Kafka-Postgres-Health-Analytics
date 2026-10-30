@@ -25,7 +25,7 @@
 --     Data.facilityId / Name / Type
 --                               -> stock_entity.facility_id / facility_name / facility_type
 --     Data.additionalDetails.lat / .lng
---                               -> JSONExtractFloat(stock_entity.additional_details, 'lat'/'lng')
+--                               -> stock_campaign_field keys lat / lng (value_number)
 --     Data.stockReconciliation.physicalCount
 --                               -> stock_reconciliation_entity.physical_count
 --     Data.role                 -> project_staff_entity.role / stock_entity.role
@@ -197,8 +197,9 @@ GROUP BY
 
 -- 2. mv_dm_stock_facility_points -> dm_stock_facility_points
 --
--- JSONHas on both keys mirrors the ES `exists` guards on
--- Data.additionalDetails.lat / .lng. Without it every facility lacking
+-- Only stock versions with BOTH a lat and a lng child row (stock_campaign_field,
+-- joined on the version) count, mirroring the ES `exists` guards on
+-- Data.additionalDetails.lat / .lng. Without that every facility lacking
 -- coordinates would land at (0, 0) -- a real point in the Gulf of Guinea, and
 -- a classic way to put phantom warehouses on a map.
 --
@@ -210,6 +211,20 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_facility_points
 REFRESH EVERY 80 YEAR
 TO dm_stock_facility_points
 AS
+WITH
+-- The stock row's coordinates, one row per stock version; only versions with
+-- BOTH lat and lng as numbers (a null coordinate has no child row).
+stock_coordinates AS (
+    SELECT
+        id,
+        last_modified_time,
+        anyIf(value_number, key = 'lat') AS lat,
+        anyIf(value_number, key = 'lng') AS lng
+    FROM stock_campaign_field FINAL
+    WHERE key IN ('lat', 'lng') AND value_type = 'number'
+    GROUP BY id, last_modified_time
+    HAVING countIf(key = 'lat') = 1 AND countIf(key = 'lng') = 1
+)
 SELECT
     tenant_id,
     campaign_number,
@@ -226,12 +241,13 @@ SELECT
     facility_id,
     facility_name,
     facility_type,
-    avg(JSONExtractFloat(additional_details, 'lat')) AS latitude,
-    avg(JSONExtractFloat(additional_details, 'lng')) AS longitude,
+    avg(coordinates.lat)                             AS latitude,
+    avg(coordinates.lng)                             AS longitude,
     toUInt64(count())                                AS transaction_count
-FROM stock_entity FINAL
-WHERE JSONHas(additional_details, 'lat')
-  AND JSONHas(additional_details, 'lng')
+FROM stock_entity AS stock FINAL
+INNER JOIN stock_coordinates AS coordinates
+    ON  coordinates.id = stock.id
+    AND coordinates.last_modified_time = stock.last_modified_time
 GROUP BY
     tenant_id,
     campaign_number,

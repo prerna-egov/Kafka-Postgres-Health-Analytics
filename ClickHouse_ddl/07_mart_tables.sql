@@ -1593,4 +1593,3 @@ CREATE TABLE IF NOT EXISTS dm_hf_checklist_outcome (
 ENGINE = MergeTree
 ORDER BY (tenant_id, campaign_number, checklist_name, role, event_date)
 SETTINGS index_granularity = 8192;
-

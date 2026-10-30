@@ -1,13 +1,13 @@
 """
-hf_referral_test_transformation.py
+hf_referral_transformation.py
 
-TEST twin of hf_referral_transformation.py for the `hf_referral` entity: the
+Production bronze-to-silver DAG replacing the Python hf_referral_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `hf_referral` entity: the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.hf_referral_entity_sql_test, never to hf_referral_entity.
-Entity name `hf_referral_test` (dag_id hf_referral_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.hf_referral_entity.
+dag_id hf_referral_transformation.
 
-Known differences from hf_referral_transformation.py (all deliberate)
+Known differences from the Python hf_referral_transformation.py (all deliberate)
     - stg_hf_referral is read with FINAL (the Python DAG reads every version and
       relies on the silver table's own ReplacingMergeTree to collapse them).
     - stg_project_address is read through 14's prj_by_project as one boundary
@@ -28,7 +28,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     cycle_index_expressions,
     project_address_join_sql,
     project_join_sql,
@@ -192,8 +192,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="hf_referral_test",
-    python_entity="hf_referral",
+    entity="hf_referral",
     driving_table="stg_hf_referral",
     slice_filter_class=HfReferralSliceFilter,
     target=SilverTarget(
@@ -210,4 +209,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

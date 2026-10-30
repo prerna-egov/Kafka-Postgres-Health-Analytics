@@ -1,13 +1,13 @@
 """
-household_member_test_transformation.py
+household_member_transformation.py
 
-TEST twin of household_member_transformation.py for the `household_member`
+Production bronze-to-silver DAG replacing the Python household_member_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `household_member`
 entity: the flatten + write runs inside ClickHouse as one INSERT ... SELECT
-per slice (see sql_flatten_common.py for how a run works). Writes to
-<database>.household_member_entity_sql_test, never to household_member_entity.
-Entity name `household_member_test` (dag_id household_member_test_transformation).
+per slice (see sql_flatten_common.py for how a run works). Writes to <database>.household_member_entity.
+dag_id household_member_transformation.
 
-Known differences from household_member_transformation.py (all deliberate)
+Known differences from the Python household_member_transformation.py (all deliberate)
     - stg_household_member is read with FINAL (the Python DAG reads every
       version and relies on the silver table's own ReplacingMergeTree).
     - The household and the individual are collapsed to ONE row per
@@ -40,11 +40,11 @@ from sql_flatten_common import (  # noqa: E402
     address_join_sql,
     age_expressions,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
+    campaign_field_rows_sql,
     cycle_index_expressions,
     field_pairs_sql,
     json_int_or_null_sql,
-    json_object_sql,
     json_value_sql,
     one_row_per_key_sql,
     project_join_sql,
@@ -159,7 +159,6 @@ def joined_rows_sql(f: HouseholdMemberSliceFilter) -> str:
         member.client_last_modified_by          AS client_last_modified_by,
         member.client_created_time              AS client_created_time,
         member.client_last_modified_time        AS client_last_modified_time,
-        household.latest_additional_details     AS household_additional_details,
         address.latitude                        AS address_latitude,
         address.longitude                       AS address_longitude,
         address.locality_code                   AS address_locality_code,
@@ -208,8 +207,7 @@ def helper_expressions(f: HouseholdMemberSliceFilter) -> list[tuple[str, str]]:
     """Port of household_member_transformation._build_household_member_additional_details,
     _resolve_individual_extra_fields, _resolve_cycle_index_str, _date_to_epoch_ms."""
     return [
-        # the three fields[] blobs as (key, json value) arrays
-        ("household_pairs",  field_pairs_sql("joined.household_additional_details")),
+        # the member's and the individual's fields[] blobs as (key, json value) arrays
         ("member_pairs",     field_pairs_sql("joined.additional_details")),
         ("individual_fields",
          "arrayFilter(f -> JSONHas(f, 'key'), JSONExtractArrayRaw(joined.individual_additional_details, 'fields'))"),
@@ -224,11 +222,10 @@ def helper_expressions(f: HouseholdMemberSliceFilter) -> list[tuple[str, str]]:
          f"('disabilityType', {json_value_sql('disability_type_field')})], [])"),
         # cycleIndex (= get_project_cycles, fetch_cycle_index on client_created_time, "%02d" or null)
         *cycle_index_expressions("joined.project_additional_details", "joined.client_created_time"),
-        # the derived blob: household fields, then member fields (member wins), then the individual
-        # extras, then cycleIndex -- Python dict semantics applied once over the whole sequence
-        ("additional_details_pairs",
-         "arrayConcat(household_pairs, member_pairs, individual_extra_pairs, [('cycleIndex', cycle_index_json)])"),
-        ("additional_details_json", json_object_sql("additional_details_pairs")),
+        # household_member_campaign_field rows: the member's own keys, the individual extras and
+        # cycleIndex (as a number) -- the household's keys are household_campaign_field's (join on household_id)
+        ("campaign_field_pairs",
+         "arrayConcat(member_pairs, individual_extra_pairs, [('cycleIndex', cycle_index_number_json)])"),
         # date_of_birth / age / gender only when the individual row was found (see the module docstring)
         ("individual_known", "joined.individual_matched"),
         *age_expressions("joined.individual_date_of_birth"),
@@ -277,7 +274,6 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
     ("geo_point_lat", "joined.address_latitude"),
     ("geo_point_lon", "joined.address_longitude"),
     ("boundary_code", "joined.address_locality_code"),
-    ("additional_details", "additional_details_json"),
     ("project_id", "joined.project_id"),
     ("project_type", "joined.project_type"),
     ("project_type_id", "joined.project_type_id"),
@@ -288,8 +284,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="household_member_test",
-    python_entity="household_member",
+    entity="household_member",
     driving_table="stg_household_member",
     slice_filter_class=HouseholdMemberSliceFilter,
     target=SilverTarget(
@@ -301,9 +296,12 @@ SPEC = EntitySpec(
             boundary_lookup(boundary_keys_sql, code_expr="joined.address_locality_code"),
             user_lookup(user_keys_sql, user_expr="joined.client_last_modified_by"),
         ),
+        # campaign-specific keys -> household_member_campaign_field, written from the same computed slice
+        campaign_fields=campaign_field_rows_sql("campaign_field_pairs"),
+        campaign_version_column="client_last_modified_time",
     ),
 )
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

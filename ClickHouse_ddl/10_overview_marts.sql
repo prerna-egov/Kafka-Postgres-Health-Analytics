@@ -24,7 +24,7 @@
 --     Data.administrationStatus              -> project_task_entity.administration_status
 --     Data.projectBeneficiaryClientReferenceId
 --                                            -> project_task_entity.project_beneficiary_client_reference_id
---     Data.additionalDetails.cycleIndex      -> project_task_entity.`cycleIndex`
+--     Data.additionalDetails.cycleIndex      -> project_task_campaign_field key cycleIndex
 --     Data.eventType / Data.physicalCount    -> stock_entity.event_type / physical_count
 --     Data.targetType / Data.overallTarget / Data.targetPerDay
 --                                            -> dm_targets_base (already built; see below)
@@ -178,10 +178,42 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- columns to plain String so the AggregateFunction signature matches the
 -- column type exactly -- a LowCardinality mismatch here is a create-time type
 -- error, not a silent wrong answer, but the cast keeps it unambiguous.
+--
+-- cycleIndex, age and gender are project_task_campaign_field rows (silver is
+-- campaign-agnostic): they are pivoted per task version and joined back on the
+-- version, so the query below reads them under their old column names.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_smc_administered_base
 REFRESH EVERY 80 YEAR
 TO dm_smc_administered_base
 AS
+WITH
+-- The task's campaign-specific values, one row per task version. A key the
+-- version doesn't carry stays 0 / '' (join_use_nulls = 0), as in silver.
+task_campaign_fields AS (
+    SELECT
+        id,
+        last_modified_time,
+        toUInt8(anyIf(value_number, key = 'cycleIndex' AND value_type = 'number')) AS cycle_index,
+        toUInt32(anyIf(value_number, key = 'age' AND value_type = 'number')) AS age,
+        anyIf(value_string, key = 'gender' AND value_type = 'string') AS gender
+    FROM project_task_campaign_field FINAL
+    WHERE key IN ('cycleIndex', 'age', 'gender')
+    GROUP BY id, last_modified_time
+),
+-- project_task_entity with those values under the silver column names, so the
+-- query below is the original one. Joined on the version: keys a later version
+-- dropped are left behind in the child table.
+tasks_with_campaign_fields AS (
+    SELECT
+        task.*,
+        fields.cycle_index AS `cycleIndex`,
+        fields.age AS age,
+        fields.gender AS gender
+    FROM project_task_entity AS task FINAL
+    LEFT JOIN task_campaign_fields AS fields
+        ON  fields.id = task.id
+        AND fields.last_modified_time = task.last_modified_time
+)
 SELECT
     tenant_id,
     campaign_number,
@@ -218,7 +250,7 @@ SELECT
     ))                                 AS administered_count,
     toUInt64(count())                  AS task_rows,
     sum(quantity)                      AS resource_quantity_sum
-FROM project_task_entity FINAL
+FROM tasks_with_campaign_fields
 GROUP BY
     tenant_id,
     campaign_number,
@@ -645,8 +677,9 @@ LEFT JOIN campaigns_collecting_gender AS campaign
 -- campaign day, for the zero-dose map aggregated per health facility (#2316).
 -- Definitions, grain and reading rules are on item 27 in 07.
 --
--- Read straight from silver: no mart carries receivedOPVBefore. The LIKE is a
--- cheap pre-filter, so the JSON is parsed only on the tasks that carry the key.
+-- Read straight from silver: no mart carries receivedOPVBefore. It is the
+-- task's receivedOPVBefore row in project_task_campaign_field, joined on the
+-- task's version.
 --
 -- DEPENDS ON is load-bearing: without it this view can refresh against a
 -- half-rebuilt targets mart.
@@ -656,6 +689,29 @@ REFRESH EVERY 80 YEAR
 TO dm_zero_dose_daily_by_node
 AS
 WITH
+-- The task's campaign-specific values, one row per task version. A key the
+-- version doesn't carry stays 0 / '' (join_use_nulls = 0), as in silver.
+task_campaign_fields AS (
+    SELECT
+        id,
+        last_modified_time,
+        anyIf(value_string, key = 'receivedOPVBefore' AND value_type = 'string') AS received_opv_before
+    FROM project_task_campaign_field FINAL
+    WHERE key IN ('receivedOPVBefore')
+    GROUP BY id, last_modified_time
+),
+-- project_task_entity with those values under the silver column names, so the
+-- query below is the original one. Joined on the version: keys a later version
+-- dropped are left behind in the child table.
+tasks_with_campaign_fields AS (
+    SELECT
+        task.*,
+        fields.received_opv_before AS received_opv_before
+    FROM project_task_entity AS task FINAL
+    LEFT JOIN task_campaign_fields AS fields
+        ON  fields.id = task.id
+        AND fields.last_modified_time = task.last_modified_time
+),
 -- The PLANNED window per campaign -- the same CTE as 1d (see item 25 in 07),
 -- copied so the two views do not depend on each other.
 campaign_window AS (
@@ -668,7 +724,7 @@ campaign_window AS (
     HAVING window_end_date >= window_start_date
 ),
 -- Every child task that answered receivedOPVBefore (YES or NO) inside the
--- window. additional_details is the raw {"fields":[{key,value}],...} blob.
+-- window, from the task's receivedOPVBefore child row.
 answered_tasks AS (
     SELECT
         task.tenant_id AS tenant_id, task.campaign_number AS campaign_number,
@@ -680,16 +736,12 @@ answered_tasks AS (
         task.level_nine_code AS level_nine_code,
         task.task_dates AS event_date,
         task.project_beneficiary_client_reference_id AS beneficiary_reference_id,
-        JSONExtractString(
-            arrayFirst(field -> JSONExtractString(field, 'key') = 'receivedOPVBefore',
-                       JSONExtractArrayRaw(task.additional_details, 'fields')),
-            'value') AS received_opv_before
-    FROM project_task_entity AS task FINAL
+        task.received_opv_before AS received_opv_before
+    FROM tasks_with_campaign_fields AS task
     INNER JOIN campaign_window
         ON  task.tenant_id = campaign_window.tenant_id
         AND task.campaign_number = campaign_window.campaign_number
-    WHERE task.additional_details LIKE '%receivedOPVBefore%'
-      AND task.task_dates BETWEEN campaign_window.window_start_date AND campaign_window.window_end_date
+    WHERE task.task_dates BETWEEN campaign_window.window_start_date AND campaign_window.window_end_date
       AND task.project_beneficiary_client_reference_id != ''
       AND received_opv_before IN ('YES', 'NO')
 ),
@@ -790,7 +842,10 @@ FROM cumulative_per_node_per_day;
 -- reading rules are on item 28 in 07.
 --
 -- Read straight from silver: the miss reason and the task time are in no
--- mart. The work is bounded by the MISSED children, not by all tasks: the
+-- mart. The reason and cycleIndex are project_task_campaign_field rows: the
+-- tasks are narrowed on silver columns first (miss statuses; successful
+-- administrations of missed children) and the child table is read only for
+-- those ids. The work is bounded by the MISSED children, not by all tasks: the
 -- administered tasks are read only for children who were missed (a semi-join
 -- on that small set), and each child collapses to one first-missed date and at
 -- most one first-reached date before anything is spread over nodes and days.
@@ -814,13 +869,14 @@ campaign_window AS (
     GROUP BY tenant_id, campaign_number
     HAVING window_end_date >= window_start_date
 ),
--- Every task inside the window that records a child as absent or refused.
--- Real SMC data uses the statuses; the ES/polio shape is ADMINISTRATION_FAILED
--- with a `reason` field in the raw additional_details.
-missed_tasks AS (
+-- Tasks inside the window whose STATUS can record a miss. Real SMC data uses
+-- the statuses; the ES/polio shape is ADMINISTRATION_FAILED with a `reason`
+-- child row, so those are kept as candidates until their reason is known.
+candidate_missed_tasks AS (
     SELECT
+        task.id AS id, task.last_modified_time AS last_modified_time,
         task.tenant_id AS tenant_id, task.campaign_number AS campaign_number,
-        task.cycleIndex AS cycle_index,
+        task.administration_status AS administration_status,
         task.project_beneficiary_client_reference_id AS beneficiary_reference_id,
         task.created_time AS task_time, task.task_dates AS event_date,
         (task.hierarchy_type, task.level_one_code, task.level_two_code, task.level_three_code,
@@ -832,12 +888,39 @@ missed_tasks AS (
         AND task.campaign_number = campaign_window.campaign_number
     WHERE task.task_dates BETWEEN campaign_window.window_start_date AND campaign_window.window_end_date
       AND task.project_beneficiary_client_reference_id != ''
-      AND (task.administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT')
-           OR (task.administration_status = 'ADMINISTRATION_FAILED'
-               AND JSONExtractString(
-                       arrayFirst(field -> JSONExtractString(field, 'key') = 'reason',
-                                  JSONExtractArrayRaw(task.additional_details, 'fields')),
-                       'value') IN ('REFUSED', 'ABSENCE')))
+      AND task.administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT', 'ADMINISTRATION_FAILED')
+),
+-- cycleIndex and reason of tasks with a miss status only: the child table is
+-- ordered by (id, key), so the id filter reads just their rows. The id list is
+-- a plain status scan (no FINAL, no window) -- a superset is harmless, the
+-- join below is on the task version. A missing key stays 0 / ''
+-- (join_use_nulls = 0), as in silver.
+candidate_missed_task_fields AS (
+    SELECT
+        id,
+        last_modified_time,
+        toUInt8(anyIf(value_number, key = 'cycleIndex' AND value_type = 'number')) AS cycle_index,
+        anyIf(value_string, key = 'reason' AND value_type = 'string') AS reason
+    FROM project_task_campaign_field FINAL
+    WHERE id IN (SELECT id FROM project_task_entity
+                 WHERE administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT', 'ADMINISTRATION_FAILED'))
+      AND key IN ('cycleIndex', 'reason')
+    GROUP BY id, last_modified_time
+),
+-- Every task inside the window that records a child as absent or refused.
+missed_tasks AS (
+    SELECT
+        candidate.tenant_id AS tenant_id, candidate.campaign_number AS campaign_number,
+        fields.cycle_index AS cycle_index,
+        candidate.beneficiary_reference_id AS beneficiary_reference_id,
+        candidate.task_time AS task_time, candidate.event_date AS event_date,
+        candidate.boundary_path AS boundary_path
+    FROM candidate_missed_tasks AS candidate
+    LEFT JOIN candidate_missed_task_fields AS fields
+        ON  fields.id = candidate.id
+        AND fields.last_modified_time = candidate.last_modified_time
+    WHERE candidate.administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT')
+       OR (candidate.administration_status = 'ADMINISTRATION_FAILED' AND fields.reason IN ('REFUSED', 'ABSENCE'))
 ),
 -- One row per missed child PER CYCLE: when and where they were FIRST missed,
 -- plus the dates of any further miss records (noted, never counted as new
@@ -854,13 +937,15 @@ missed_children AS (
     FROM missed_tasks
     GROUP BY tenant_id, campaign_number, cycle_index, beneficiary_reference_id
 ),
--- Successful administrations, read ONLY for children who were missed in that cycle.
-administered_tasks_of_missed_children AS (
+-- Successful administrations of children who have a miss-status task at all
+-- (any cycle, any version: a cheap superset of the missed children). Which
+-- (cycle, child) pairs were really missed is settled by child_outcomes' join.
+candidate_administered_tasks AS (
     SELECT
+        task.id AS id, task.last_modified_time AS last_modified_time,
         task.tenant_id AS tenant_id, task.campaign_number AS campaign_number,
-        task.cycleIndex AS cycle_index,
         task.project_beneficiary_client_reference_id AS beneficiary_reference_id,
-        groupArray((task.created_time, task.task_dates)) AS administered_times_and_dates
+        task.created_time AS task_time, task.task_dates AS event_date
     FROM project_task_entity AS task FINAL
     INNER JOIN campaign_window
         ON  task.tenant_id = campaign_window.tenant_id
@@ -868,8 +953,37 @@ administered_tasks_of_missed_children AS (
     WHERE task.task_dates BETWEEN campaign_window.window_start_date AND campaign_window.window_end_date
       AND task.administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
       AND task.delivered_to = 'INDIVIDUAL'
-      AND (task.tenant_id, task.campaign_number, task.cycleIndex, task.project_beneficiary_client_reference_id) IN
-          (SELECT tenant_id, campaign_number, cycle_index, beneficiary_reference_id FROM missed_children)
+      AND task.project_beneficiary_client_reference_id IN (SELECT project_beneficiary_client_reference_id FROM project_task_entity
+          WHERE administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT', 'ADMINISTRATION_FAILED'))
+),
+-- cycleIndex of those candidates only (the same id-filtered child read, the
+-- id list again a plain scan of the same predicates).
+candidate_administered_task_cycles AS (
+    SELECT
+        id,
+        last_modified_time,
+        toUInt8(anyIf(value_number, key = 'cycleIndex' AND value_type = 'number')) AS cycle_index
+    FROM project_task_campaign_field FINAL
+    WHERE id IN (SELECT id FROM project_task_entity
+                 WHERE administration_status IN ('ADMINISTRATION_SUCCESS', 'VISITED')
+                   AND delivered_to = 'INDIVIDUAL'
+                   AND project_beneficiary_client_reference_id IN (SELECT project_beneficiary_client_reference_id FROM project_task_entity
+                       WHERE administration_status IN ('BENEFICIARY_REFUSED', 'BENEFICIARY_ABSENT', 'ADMINISTRATION_FAILED')))
+      AND key = 'cycleIndex'
+    GROUP BY id, last_modified_time
+),
+-- Those administrations per (cycle, child); child_outcomes LEFT JOINs them on
+-- the full key, so groups for a cycle the child wasn't missed in are unused.
+administered_tasks_of_missed_children AS (
+    SELECT
+        candidate.tenant_id AS tenant_id, candidate.campaign_number AS campaign_number,
+        cycles.cycle_index AS cycle_index,
+        candidate.beneficiary_reference_id AS beneficiary_reference_id,
+        groupArray((candidate.task_time, candidate.event_date)) AS administered_times_and_dates
+    FROM candidate_administered_tasks AS candidate
+    LEFT JOIN candidate_administered_task_cycles AS cycles
+        ON  cycles.id = candidate.id
+        AND cycles.last_modified_time = candidate.last_modified_time
     GROUP BY tenant_id, campaign_number, cycle_index, beneficiary_reference_id
 ),
 -- Each missed child's outcome. A child vaccinated in the same cycle BEFORE
