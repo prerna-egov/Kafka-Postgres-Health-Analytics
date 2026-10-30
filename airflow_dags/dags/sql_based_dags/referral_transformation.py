@@ -1,18 +1,18 @@
 """
-referral_test_transformation.py
+referral_transformation.py
 
-TEST twin of referral_transformation.py for the `referral` entity: the flatten
+Production bronze-to-silver DAG replacing the Python referral_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `referral` entity: the flatten
 + write runs inside ClickHouse as one INSERT ... SELECT per slice (see
-sql_flatten_common.py for how a run works). Writes to
-<database>.referral_entity_sql_test, never to referral_entity.
-Entity name `referral_test` (dag_id referral_test_transformation).
+sql_flatten_common.py for how a run works). Writes to <database>.referral_entity.
+dag_id referral_transformation.
 
 The Python DAG resolves the beneficiary -> project and the individual -> address
 chains as per-tenant lookup rounds; here they are slice-bounded joins in the one
 statement, each collapsed to one row per key the way the Python DAG's
 `ORDER BY id ASC LIMIT 1 BY <key>` does.
 
-Known differences from referral_transformation.py (all deliberate)
+Known differences from the Python referral_transformation.py (all deliberate)
     - stg_referral is read with FINAL (the Python DAG reads every version).
     - The beneficiary and individual sides take each row's newest version before
       picking the lowest id per reference (no is_deleted filter, as in the
@@ -36,7 +36,7 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     age_expressions,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     cycle_index_expressions,
     json_int_or_null_sql,
     json_object_sql,
@@ -373,8 +373,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="referral_test",
-    python_entity="referral",
+    entity="referral",
     driving_table="stg_referral",
     slice_filter_class=ReferralSliceFilter,
     target=SilverTarget(
@@ -391,4 +390,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

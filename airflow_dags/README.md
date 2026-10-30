@@ -11,7 +11,8 @@ Airflow DAGs that populate the ClickHouse bronze tables from the raw event store
 **Bronze → silver**
 
 - `dags/bronze-to-silver_orcestrator.py` — orchestrator. Triggers each entity's transformation DAG in order, waiting for one to finish before starting the next.
-- `dags/<entity>_transformation.py` — one DAG per entity (e.g. `project_task_transformation.py`), doing the actual bronze→silver work for that entity. Only triggered by the orchestrator (or manually with an equivalent `conf`); not scheduled on its own.
+- `dags/sql_based_dags/<entity>_transformation.py` — one DAG per entity (e.g. `project_task_transformation.py`), doing the actual bronze→silver work for that entity inside ClickHouse (see [The bronze-to-silver DAGs and their orchestrator](#the-bronze-to-silver-dags-and-their-orchestrator-dagssql_based_dags)). Only triggered by the orchestrator (or manually with an equivalent `conf`); not scheduled on its own.
+- `python_reference/<entity>_transformation.py` — the original Python implementations, kept for reference only (not deployed).
 
 **Shared**
 
@@ -91,51 +92,48 @@ Nothing about *which* entities run, in *what order*, or *how often* the orchestr
 
 | Variable                                   | What it controls                                                                                                                    | Valid values                                                                                                                                                                                                                                   | Default if unset                                                                 |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `entity_transformation_order`            | Which entities to transform, and in what order                                                                                      | JSON array of entity keys, e.g.`["project_task"]` or `["project", "project_staff", "project_task"]`. Each key must be snake_case and match an existing `<key>_transformation.py` DAG file (key = filename minus `_transformation.py`). | none set → orchestrator has zero trigger tasks (parses fine, just does nothing) |
+| `entity_transformation_order`            | Which entities to transform, and in what order                                                                                      | JSON array of entity keys, e.g.`["project_task"]` or `["project", "project_staff", "project_task"]`. Each key must be snake_case and match an existing `dags/sql_based_dags/<key>_transformation.py` DAG file (key = filename minus `_transformation.py`). | none set → orchestrator has zero trigger tasks (parses fine, just does nothing) |
 | `bronze_to_silver_orchestrator_schedule` | How often the orchestrator DAG runs                                                                                                 | A cron expression (`"0 */2 * * *"`), an Airflow schedule preset (`"@hourly"`, `"@daily"`, `"@once"`, ...), or the literal string `"None"` to make it unscheduled / manually-triggered-only                                           | `@hourly`                                                                      |
-| `bronze_to_silver_chunk_size`            | How many bronze rows each entity DAG reads per page when paginating its bronze read                                                 | A positive integer, e.g.`5000` or `10000`                                                                                                                                                                                                  | `5000`                                                                         |
+| `bronze_to_silver_chunk_size`            | Rows of the driving bronze table per ClickHouse `INSERT … SELECT` slice of every entity DAG (bounds per-query RAM and the inline VALUES sizes). A slice whose lookup or statement is too large is split in half until it fits | A positive integer, e.g.`5000` or `10000`                                                                                                                                                                                                  | `5000`                                                                         |
 | `bronze_to_silver_window_start_override` | Manually pins the start of the bronze read window for the next orchestrator run, instead of using this run's`data_interval_start` | An ISO 8601 datetime string, e.g.`"2026-08-01T00:00:00+00:00"`                                                                                                                                                                               | unset → falls back to`data_interval_start`                                    |
 | `bronze_to_silver_window_end_override`   | Manually pins the end of the bronze read window for the next orchestrator run, instead of using this run's`data_interval_end`     | An ISO 8601 datetime string                                                                                                                                                                                                                    | unset → falls back to`data_interval_end`                                      |
-| `bronze_to_silver_chunk_size` (SQL twins) | Also the slice size of every SQL twin in `dags/sql_based_dags/`: rows of the driving bronze table per ClickHouse `INSERT … SELECT` slice (bounds per-query RAM and the inline VALUES sizes). A slice whose lookup or statement is too large is split in half until it fits | A positive integer, e.g.`5000` | `5000` |
-| `sql_test_database`                      | The ClickHouse database every TEST twin reads bronze from and writes its `<silver>_sql_test` table to                                                                                                    | A database name, e.g.`analytics_test`                                                                                                                                                                                                       | `analytics`                                                                    |
 
 eGov service base URLs (boundary-service, user-service, MDMS, workflow-service) are **not** Airflow Variables — see [Configuring eGov service URLs via environment variables](#configuring-egov-service-urls-via-environment-variables) below for why and how to set them.
 
-### The SQL-side twins and their orchestrator (`dags/sql_based_dags/`)
+### The bronze-to-silver DAGs and their orchestrator (`dags/sql_based_dags/`)
 
-Every entity DAG has a **test twin** in `dags/sql_based_dags/<entity>_test_transformation.py`
-(`dag_id=<entity>_test_transformation`, entity name `<entity>_test`): same bronze inputs, same
-boundary-service / user-service / workflow-service calls from Python, same silver row semantics, but the
-per-row flatten + write runs inside ClickHouse as one `INSERT … SELECT` per per-tenant id-range slice, with
-that slice's API results embedded inline in the query (no staging table, nothing persists). A twin writes to
-`<silver_table>_sql_test` (created `AS <silver_table>`), never to the real silver table, so the two can be
-diffed. All twins share `dags/sql_based_dags/sql_flatten_common.py` (slicing, lookups, the INSERT rendering, the
-DAG wiring); an entity file only declares its joins, helper expressions and `(silver column, expression)`
-pairs. The window reads and the join sides that are looked up by a non-primary key read through the
-projections in `ClickHouse_ddl/14_bronze_projections.sql` (a query with `FINAL` never uses a projection, so those
-sides are `argMax` subqueries; extend the projection before reading a new column through it).
+Every silver table is written by `dags/sql_based_dags/<entity>_transformation.py` (`dag_id=<entity>_transformation`):
+the per-row flatten + write runs inside ClickHouse as one `INSERT … SELECT` per per-tenant id-range slice, with
+that slice's boundary-service / user-service / workflow-service results embedded inline in the query (no staging
+table, nothing persists). The DAGs write the main silver tables (and, for household, household_member,
+project_beneficiary, stock and project_task, their `<entity>_campaign_field` child tables) in the ClickHouse
+connection's own database (`clickhouse_default`'s schema, default `analytics`). All of them share
+`dags/sql_based_dags/sql_flatten_common.py` (slicing, lookups, the INSERT rendering, the DAG wiring); an entity file
+only declares its joins, helper expressions and `(silver column, expression)` pairs. The window reads and the join
+sides that are looked up by a non-primary key read through the projections in
+`ClickHouse_ddl/14_bronze_projections.sql` (a query with `FINAL` never uses a projection, so those sides are
+`argMax` subqueries; extend the projection before reading a new column through it).
 
-The same folder holds `bronze_to_silver_task_orchestrator.py`, which runs every twin as a task of one DAG
-(`bronze_to_silver_task_orchestrator`) instead of triggering one DAG per entity; it also defines
-`bronze_to_silver_python_task_orchestrator`, which runs the Python DAGs' own transforms the same way for like-for-like
-benchmarks. Both are controlled by `task_orchestrator_entity_order` (default: all entities), `task_orchestrator_max_active_tasks`
-(entities at a time, default 3), `task_orchestrator_task_retries` (default 1) and `task_orchestrator_schedule` (default
-`None`, manual only), and take the window from their conf or the two override Variables above.
+The original Python DAGs are kept for reference only in `python_reference/` (outside `dags/`, so Airflow never
+loads them); each SQL DAG's docstring lists its deliberate differences from the Python file of the same name.
 
-Add `<entity>_test` to `entity_transformation_order` to run a twin from the orchestrator, or trigger it by
-hand with the orchestrator's conf shape plus an optional flag:
+The same folder holds `bronze_to_silver_task_orchestrator.py`, which runs every entity as a task of one DAG
+(`bronze_to_silver_task_orchestrator`) instead of triggering one DAG per entity. It is controlled by
+`task_orchestrator_entity_order` (default: all entities), `task_orchestrator_max_active_tasks` (entities at a time,
+default 3), `task_orchestrator_task_retries` (default 1) and `task_orchestrator_schedule` (default `None`, manual
+only), and takes the window from its conf or the two override Variables above.
+
+An entity DAG can also be triggered by hand with the orchestrator's conf shape:
 
 ```json
-{"start_time": "2026-09-09T00:00:00+00:00", "end_time": "2026-09-23T00:00:00+00:00", "truncate_target": true}
+{"start_time": "2026-09-09T00:00:00+00:00", "end_time": "2026-09-23T00:00:00+00:00"}
 ```
 
-Two Variables steer the twins: `<entity>_sql_test_slice_size` (rows of the driving bronze table per
-`INSERT … SELECT`, default `5000`; lower it if a slice's inline VALUES tables grow past the guards) and
-`sql_test_database` (the database the twins read from and write to, default `analytics`; set it to a copy such
-as `analytics_test` to test against copied data without touching `analytics`).
+Re-running a window is safe (the silver tables are ReplacingMergeTree). The old `truncate_target` flag is refused:
+these DAGs write the main tables.
 
-Rationale and measurements: `PROJECTION_COMPARISON_REPORT.md` (why the Python flatten is the wall-time
-floor, and the per-entity parity results in section 10).
+Rationale and measurements: `PROJECTION_COMPARISON_REPORT.md` (why the Python flatten was the wall-time
+floor, and the per-entity parity results against the Python DAGs in section 10).
 
 ### Setting them via the CLI
 
@@ -246,7 +244,7 @@ Unlike an Airflow Variable, these aren't settable via the Airflow UI/CLI at runt
 
 **Failure handling**: every function that makes an actual HTTP call is wrapped in try/except — on any failure it logs the exception and returns an empty/default result, never raises. A single external-service outage degrades that chunk's enrichment (rows get empty boundary/user fields) rather than failing the whole task.
 
-**Same pattern applies to ClickHouse-side lookups that are mutually exclusive per row** (e.g. a task's beneficiary is a household *or* an individual, never both) — see `project_task_transformation.py`'s `_extract_beneficiary_lookup_keys`/`_resolve_household_details`/`_resolve_individual_details` for a ClickHouse-query version of the same extract/resolve/attach shape, which runs a targeted query per branch instead of joining every branch's table onto the main read.
+**Same pattern applies to ClickHouse-side lookups that are mutually exclusive per row** (e.g. a task's beneficiary is a household *or* an individual, never both) — see `python_reference/project_task_transformation.py`'s `_extract_beneficiary_lookup_keys`/`_resolve_household_details`/`_resolve_individual_details` for a ClickHouse-query version of the same extract/resolve/attach shape, which runs a targeted query per branch instead of joining every branch's table onto the main read.
 
 ## Local dev environment
 

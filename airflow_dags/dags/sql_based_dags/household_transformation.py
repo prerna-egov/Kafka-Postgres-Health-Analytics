@@ -1,13 +1,13 @@
 """
-household_test_transformation.py
+household_transformation.py
 
-TEST twin of household_transformation.py for the `household` entity: the
+Production bronze-to-silver DAG replacing the Python household_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `household` entity: the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.household_entity_sql_test, never to household_entity.
-Entity name `household_test` (dag_id household_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.household_entity.
+dag_id household_transformation.
 
-Known differences from household_transformation.py (all deliberate)
+Known differences from the Python household_transformation.py (all deliberate)
     - stg_household is read with FINAL (the Python DAG reads every version and
       relies on the silver table's own ReplacingMergeTree to collapse them).
     - The user -> project bridge takes, per (tenant_id, staff row id), the
@@ -35,11 +35,10 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     address_join_sql,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     campaign_field_rows_sql,
     cycle_index_expressions,
     json_int_or_zero_sql,
-    json_object_sql,
     json_string_sql,
     json_value_sql,
     project_join_sql,
@@ -180,12 +179,8 @@ def helper_expressions(f: HouseholdSliceFilter) -> list[tuple[str, str]]:
         ("is_vulnerable",  "pregnant_women > 0 OR children > 0"),
         # cycleIndex (= get_project_cycles, fetch_cycle_index on client_created_time, "%02d" or null)
         *cycle_index_expressions("joined.project_additional_details", "joined.client_created_time"),
-        # the derived blob: coerced fields, then isVulnerable (only when true), then cycleIndex (always)
-        ("additional_details_pairs",
-         "arrayConcat(unique_field_pairs, if(is_vulnerable, [('isVulnerable', 'true')], []), "
-         "[('cycleIndex', cycle_index_json)])"),
-        ("additional_details_json", json_object_sql("additional_details_pairs")),
-        # household_campaign_field rows: every key of the derived blob, cycleIndex as a number
+        # household_campaign_field rows: the coerced fields, then isVulnerable (only when true), then
+        # cycleIndex (always, as a number)
         ("campaign_field_pairs",
          "arrayConcat(unique_field_pairs, if(is_vulnerable, [('isVulnerable', 'true')], []), "
          "[('cycleIndex', cycle_index_number_json)])"),
@@ -232,7 +227,6 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
     ("hierarchy_type", "if(joined.address_locality_code != '', joined.hierarchy_type, '')"),
     ("geo_point_lat", "joined.address_latitude"),
     ("geo_point_lon", "joined.address_longitude"),
-    ("additional_details", "additional_details_json"),
     ("project_id", "joined.project_id"),
     ("project_type", "joined.project_type"),
     ("project_type_id", "joined.project_type_id"),
@@ -243,8 +237,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="household_test",
-    python_entity="household",
+    entity="household",
     driving_table="stg_household",
     slice_filter_class=HouseholdSliceFilter,
     target=SilverTarget(
@@ -264,4 +257,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

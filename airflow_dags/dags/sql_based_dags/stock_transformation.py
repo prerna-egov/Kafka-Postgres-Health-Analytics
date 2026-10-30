@@ -1,11 +1,11 @@
 """
-stock_test_transformation.py
+stock_transformation.py
 
-TEST twin of stock_transformation.py for the `stock` entity: the flatten +
+Production bronze-to-silver DAG replacing the Python stock_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `stock` entity: the flatten +
 write runs inside ClickHouse as one INSERT ... SELECT per slice (see
-sql_flatten_common.py for how a run works). Writes to
-<database>.stock_entity_sql_test, never to stock_entity.
-Entity name `stock_test` (dag_id stock_test_transformation).
+sql_flatten_common.py for how a run works). Writes to <database>.stock_entity.
+dag_id stock_transformation.
 
 The held facility is the receiver for RECEIVED transactions and the sender
 otherwise (the transacting facility is the other party). A facility whose
@@ -14,7 +14,7 @@ the user-service and its boundary from the user's project (the staff bridge);
 any other facility resolves through stg_facility -> stg_address, falling back
 to the referenced project's boundary for PROJECT references.
 
-Known differences from stock_transformation.py (all deliberate)
+Known differences from the Python stock_transformation.py (all deliberate)
     - stg_stock is read with FINAL (the Python DAG reads every version).
     - The staff bridge takes the newest version of each staff row and drops it
       if deleted, then the lowest staff row id per user; stg_project_address is
@@ -35,12 +35,11 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     address_join_sql,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     campaign_field_rows_sql,
     cycle_index_expressions,
     json_double_or_null_sql,
     json_int_or_zero_sql,
-    json_object_sql,
     json_value_sql,
     project_address_join_sql,
     project_join_sql,
@@ -281,9 +280,7 @@ def helper_expressions(f: StockSliceFilter) -> list[tuple[str, str]]:
          f"arrayMap(fld -> (JSONExtractString(fld, 'key'), if(JSONExtractString(fld, 'key') IN ({double_keys}), "
          f"{json_double_or_null_sql('fld')}, {json_value_sql('fld')})), "
          "arrayFilter(fld -> JSONHas(fld, 'key'), JSONExtractArrayRaw(joined.additional_details, 'fields')))"),
-        ("additional_details_pairs", "arrayConcat(field_pairs, [('cycleIndex', cycle_index_json)])"),
-        ("additional_details_json", json_object_sql("additional_details_pairs")),
-        # stock_campaign_field rows: every key of the derived blob (cycleIndex as a number), plus the
+        # stock_campaign_field rows: the fields, cycleIndex (as a number), plus the
         # facility's own additionalFields `target` (0 = STAFF facility or no target key, left out)
         ("campaign_field_pairs",
          "arrayConcat(field_pairs, [('cycleIndex', cycle_index_number_json)], "
@@ -324,10 +321,8 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
     ("transacting_facility_type", "transacting_facility_type_out"),
     ("facility_level", "facility_level_out"),
     ("transacting_facility_level", "transacting_facility_level_out"),
-    ("facility_target", "facility_target_out"),
     ("task_dates", "toDate32(fromUnixTimestamp64Milli(joined.client_last_modified_time, 'UTC'))"),
     ("synced_date", "toDate32(fromUnixTimestamp64Milli(joined.last_modified_time, 'UTC'))"),
-    ("additional_details", "additional_details_json"),
     ("waybill_number", "joined.waybill_number"),
     ("project_id", "joined.reference_id"),
     ("project_type", "joined.project_type"),
@@ -339,8 +334,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="stock_test",
-    python_entity="stock",
+    entity="stock",
     driving_table="stg_stock",
     slice_filter_class=StockSliceFilter,
     target=SilverTarget(
@@ -362,4 +356,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

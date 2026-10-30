@@ -1,13 +1,13 @@
 """
-attendance_log_test_transformation.py
+attendance_log_transformation.py
 
-TEST twin of attendance_log_transformation.py for the `attendance_log`
+Production bronze-to-silver DAG replacing the Python attendance_log_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `attendance_log`
 entity: the flatten + write runs inside ClickHouse as one INSERT ... SELECT
-per slice (see sql_flatten_common.py for how a run works). Writes to
-<database>.attendance_log_entity_sql_test, never to attendance_log_entity.
+per slice (see sql_flatten_common.py for how a run works). Writes to <database>.attendance_log_entity.
 Entity name `attendance_log_test`.
 
-Known differences from attendance_log_transformation.py (all deliberate)
+Known differences from the Python attendance_log_transformation.py (all deliberate)
     - stg_attendance_log is read with FINAL (the Python DAG reads every version).
     - The two user -> project bridges (created_by for the boundary, last_modified_by
       for the project trailer) take the newest version of each staff row and drop
@@ -28,7 +28,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     own_key_join_sql,
     parse_boundary_code_sql,
     project_address_join_sql,
@@ -228,8 +228,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="attendance_log_test",
-    python_entity="attendance_log",
+    entity="attendance_log",
     driving_table="stg_attendance_log",
     slice_filter_class=AttendanceLogSliceFilter,
     target=SilverTarget(
@@ -247,4 +246,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

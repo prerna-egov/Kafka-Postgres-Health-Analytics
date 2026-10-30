@@ -1,13 +1,13 @@
 """
-pgr_test_transformation.py
+pgr_transformation.py
 
-TEST twin of pgr_transformation.py for the `pgr` entity (PGR complaints): the
+Production bronze-to-silver DAG replacing the Python pgr_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `pgr` entity (PGR complaints): the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.pgr_complaints_entity_sql_test, never to pgr_complaints_entity.
-Entity name `pgr_test` (dag_id pgr_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.pgr_complaints_entity.
+dag_id pgr_transformation.
 
-Known differences from pgr_transformation.py (all deliberate)
+Known differences from the Python pgr_transformation.py (all deliberate)
     - stg_pgr_service is read with FINAL (the Python DAG reads every version).
       Its sort key is (tenant_id, service_request_id), so the slice's `id`
       range does not prune below the tenant -- the same is true of the Python
@@ -32,7 +32,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     json_string_sql,
     one_row_per_key_sql,
     project_join_sql,
@@ -210,8 +210,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="pgr_test",
-    python_entity="pgr",
+    entity="pgr",
     driving_table="stg_pgr_service",
     slice_filter_class=PgrSliceFilter,
     target=SilverTarget(
@@ -228,4 +227,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

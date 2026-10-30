@@ -1,13 +1,13 @@
 """
-project_beneficiary_test_transformation.py
+project_beneficiary_transformation.py
 
-TEST twin of project_beneficiary_transformation.py for the `project_beneficiary`
+Production bronze-to-silver DAG replacing the Python project_beneficiary_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `project_beneficiary`
 entity: the flatten + write runs inside ClickHouse as one INSERT ... SELECT per
-slice (see sql_flatten_common.py for how a run works). Writes to
-<database>.project_beneficiary_entity_sql_test, never to project_beneficiary_entity.
+slice (see sql_flatten_common.py for how a run works). Writes to <database>.project_beneficiary_entity.
 Entity name `project_beneficiary_test`.
 
-Known differences from project_beneficiary_transformation.py (all deliberate)
+Known differences from the Python project_beneficiary_transformation.py (all deliberate)
     - stg_project_beneficiary is read with FINAL (the Python DAG reads every version).
     - stg_project is read with FINAL and stg_project_address through 14's
       prj_by_project as one boundary per project (the Python DAG joins both
@@ -31,9 +31,8 @@ from sql_flatten_common import (  # noqa: E402
     SliceFilter,
     age_expressions,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     campaign_field_rows_sql,
-    json_object_sql,
     json_string_sql,
     json_value_sql,
     one_row_per_key_sql,
@@ -203,7 +202,6 @@ def helper_expressions(f: ProjectBeneficiarySliceFilter) -> list[tuple[str, str]
          "arrayConcat(field_pairs, "
          "if(joined.individual_matched AND age_missing, [('ageInMonths', backfill_age_json)], []), "
          "if(joined.individual_matched AND gender_missing, [('gender', backfill_gender_json)], []))"),
-        ("additional_details_json", json_object_sql("additional_details_pairs")),
         # project_beneficiary_campaign_field rows: every key of the derived blob
         ("campaign_field_pairs", "additional_details_pairs"),
     ]
@@ -239,7 +237,6 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
     ("task_dates", "toDate32(fromUnixTimestamp64Milli(joined.client_last_modified_time, 'UTC'))"),
     ("synced_date", "toDate32(fromUnixTimestamp64Milli(joined.last_modified_time, 'UTC'))"),
     ("synced_time_stamp", "fromUnixTimestamp64Milli(joined.last_modified_time, 'UTC')"),
-    ("additional_details", "additional_details_json"),
     ("project_type", "joined.project_type"),
     ("project_type_id", "joined.project_type_id"),
     ("project_name", "joined.project_name"),
@@ -249,8 +246,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="project_beneficiary_test",
-    python_entity="project_beneficiary",
+    entity="project_beneficiary",
     driving_table="stg_project_beneficiary",
     slice_filter_class=ProjectBeneficiarySliceFilter,
     target=SilverTarget(
@@ -270,4 +266,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

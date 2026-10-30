@@ -1,16 +1,16 @@
 """
-project_test_transformation.py
+project_transformation.py
 
-TEST twin of project_transformation.py for the `project` entity: the flatten
+Production bronze-to-silver DAG replacing the Python project_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `project` entity: the flatten
 + write runs inside ClickHouse as one INSERT ... SELECT per slice (see
-sql_flatten_common.py for how a run works). Writes to
-<database>.project_entity_sql_test, never to project_entity.
-Entity name `project_test` (dag_id project_test_transformation).
+sql_flatten_common.py for how a run works). Writes to <database>.project_entity.
+dag_id project_transformation.
 
 Measurements and design rationale: airflow_dags/PROJECTION_COMPARISON_REPORT.md,
 section 7 (this was the first SQL-side twin; 35 min -> 12 min on unified-dev).
 
-Known differences from project_transformation.py (all deliberate)
+Known differences from the Python project_transformation.py (all deliberate)
     - stg_project_address and stg_project_target are read WITHOUT FINAL through
       14's prj_by_project projections and deduplicated with argMax on their own
       version columns, which yields exactly the rows FINAL would.
@@ -29,7 +29,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     json_string_array_sql,
     project_cycle_dose_expressions,
     project_dates_expressions,
@@ -221,8 +221,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="project_test",
-    python_entity="project",
+    entity="project",
     driving_table="stg_project",
     slice_filter_class=ProjectSliceFilter,
     target=SilverTarget(
@@ -236,4 +235,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

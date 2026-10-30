@@ -1,14 +1,15 @@
 """
-service_task_test_transformation.py
+service_task_transformation.py
 
-TEST twin of service_task_transformation.py for the `service_task` entity
+Production bronze-to-silver DAG replacing the Python service_task_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `service_task` entity
 (checklist services): the flatten + write runs inside ClickHouse as one
 INSERT ... SELECT per slice per target table (see sql_flatten_common.py for
-how a run works). Writes to <database>.service_task_entity_sql_test AND
-<database>.service_task_attribute_entity_sql_test, never to the real tables.
-Entity name `service_task_test` (dag_id service_task_test_transformation).
+how a run works). Writes to <database>.service_task_entity AND
+<database>.service_task_attribute_entity.
+dag_id service_task_transformation.
 
-Known differences from service_task_transformation.py (all deliberate)
+Known differences from the Python service_task_transformation.py (all deliberate)
     - stg_service is read with FINAL (the Python DAG reads every version).
     - The project resolved BY NAME (for services without an account_id) is the
       lowest project id per name through 14's prj_by_name, as the Python DAG's
@@ -32,7 +33,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     cycle_index_expressions,
     json_object_sql,
     one_row_per_key_sql,
@@ -58,7 +59,7 @@ from sql_flatten_common import (  # noqa: E402
 #   boundary-service response     levels           (tenant_id, hierarchy_type, boundary_code)           level_one_code .. level_nine_code
 #   user-service response         users            (tenant_id, created_by)                              user_name, name_of_user, role, user_address
 #
-# Second target, service_task_attribute_entity_sql_test:
+# Second target, service_task_attribute_entity:
 #   stg_service_attribute_value   attribute        attribute.reference_id IN the slice's service ids    every column; `value` unwrapped from its
 #                                                  (14's prj_by_reference; no tenant_id column)          {"value": ...} wrapper
 
@@ -257,8 +258,7 @@ ATTRIBUTE_SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="service_task_test",
-    python_entity="service_task",
+    entity="service_task",
     driving_table="stg_service",
     slice_filter_class=ServiceTaskSliceFilter,
     target=SilverTarget(
@@ -283,4 +283,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

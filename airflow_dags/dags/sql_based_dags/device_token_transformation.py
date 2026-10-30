@@ -1,13 +1,13 @@
 """
-device_token_test_transformation.py
+device_token_transformation.py
 
-TEST twin of device_token_transformation.py for the `device_token` entity: the
+Production bronze-to-silver DAG replacing the Python device_token_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `device_token` entity: the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.device_token_entity_sql_test, never to device_token_entity.
-Entity name `device_token_test` (dag_id device_token_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.device_token_entity.
+dag_id device_token_transformation.
 
-Known differences from device_token_transformation.py (all deliberate)
+Known differences from the Python device_token_transformation.py (all deliberate)
     - stg_device_tokens is read with FINAL (the Python DAG reads every version).
       Its sort key is (id) alone, so the slice's tenant filter does not prune;
       the table is small.
@@ -30,7 +30,7 @@ from sql_flatten_common import (  # noqa: E402
     SilverTarget,
     SliceFilter,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     project_address_join_sql,
     project_join_sql,
     staff_bridge_join_sql,
@@ -158,8 +158,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="device_token_test",
-    python_entity="device_token",
+    entity="device_token",
     driving_table="stg_device_tokens",
     slice_filter_class=DeviceTokenSliceFilter,
     target=SilverTarget(
@@ -176,4 +175,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)

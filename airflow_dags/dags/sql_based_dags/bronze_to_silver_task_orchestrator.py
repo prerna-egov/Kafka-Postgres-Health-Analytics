@@ -1,22 +1,11 @@
 """
 bronze_to_silver_task_orchestrator.py
 
-Two DAGs that run every entity's bronze-to-silver transform as TASKS of one
-DAG instead of as separately triggered DAGs, identical apart from the code each
-`transform_<entity>` task calls:
-
-    bronze_to_silver_task_orchestrator         the SQL-side twins in this folder:
-                                               `run_transformation(SPEC, window)`, the same
-                                               code path as the twin DAG's transform task
-    bronze_to_silver_python_task_orchestrator  the Python DAGs in ../ (<entity>_transformation.py):
-                                               their own `transform_bronze_to_silver` task
-                                               callable, called with the {start_time, end_time}
-                                               their `parse_time_window` would have produced
-
-Same Variables, parallelism, retries, timeout and pod requests for both, so the
-two can be benchmarked like for like. The Python modules are imported inside
-the task, not at parse time: importing one builds its DAG, which would otherwise
-be registered a second time under this file.
+One DAG, bronze_to_silver_task_orchestrator, that runs every entity's
+bronze-to-silver transform (the <entity>_transformation.py files in this
+folder) as TASKS of one DAG instead of as separately triggered DAGs: each
+`transform_<entity>` task calls `run_transformation(SPEC, window)`, the same
+code path as the entity DAG's own transform task.
 
 Compared with bronze-to-silver_orcestrator.py (TriggerDagRunOperator per
 entity), per entity this drops: the REST-API existence / unpause check, the
@@ -43,24 +32,23 @@ Ordering and failure semantics
       Airflow then retries the task task_orchestrator_task_retries times,
       re-running the entity for the whole window -- except when every failed
       slice hit a size guard, which fails without retry (lower the chunk size).
-    - An entity name with no twin module, or whose module fails to import,
+    - An entity name with no module in this folder, or whose module fails to import,
       is skipped at parse time with a warning, like the trigger orchestrator
       skips an entity whose DAG isn't registered.
 
 Variables (all read at parse time except the window overrides)
     task_orchestrator_entity_order     JSON list of entity names, e.g. ["project", "project_task"];
-                                       default: every twin in this folder, alphabetical
+                                       default: every entity module in this folder, alphabetical
     task_orchestrator_schedule         cron / preset / "None"; default "None" (manual only), so
                                        deploying this next to the trigger orchestrator doesn't
                                        double the hourly load
     task_orchestrator_max_active_tasks entities run at once; default 3 (1 = serial). Parse-time, so a
                                        change applies once the file is reparsed, to runs created after
     task_orchestrator_task_retries     Airflow retries per task; default 1. Parse-time, same as above
-    bronze_to_silver_chunk_size        rows per slice, shared by every entity (and the Python DAGs);
+    bronze_to_silver_chunk_size        rows per slice, shared by every entity;
                                        default 5000
     bronze_to_silver_window_start_override / _end_override
                                        shared with the trigger orchestrator, same rules
-    sql_test_database                  read by the twins (default `analytics`)
 
 Task pods (KubernetesExecutor) request TASK_POD_REQUESTS instead of the chart's
 0.5 CPU / 1 GiB: a task only plans slices, calls the eGov APIs and sends one
@@ -69,8 +57,9 @@ INSERT at a time (measured on unified-dev: about 5 millicores and 290 MiB, max
 limits stay as in the chart. Without the kubernetes client (local runs, no
 KubernetesExecutor) no override is set.
 
-A manual run may also pass {"start_time", "end_time", "truncate_target"} in
-dag_run.conf; conf wins over the override Variables. This file mentions
+A manual run may also pass {"start_time", "end_time"} in dag_run.conf; conf
+wins over the override Variables. truncate_target is refused: the entities
+write the main silver tables. This file mentions
 airflow and dag, as safe-mode discovery requires.
 """
 from __future__ import annotations
@@ -95,11 +84,10 @@ try:
 except ImportError:  # local runs: no KubernetesExecutor, nothing to override
     k8s = None
 
-_TWINS_DIR = os.path.dirname(os.path.abspath(__file__))  # this folder: the twins and sql_flatten_common
-_DAGS_DIR = os.path.dirname(_TWINS_DIR)  # dags/: the Python <entity>_transformation.py DAGs
-sys.path.insert(0, _TWINS_DIR)
+_ENTITIES_DIR = os.path.dirname(os.path.abspath(__file__))  # this folder: the entity modules and sql_flatten_common
+sys.path.insert(0, _ENTITIES_DIR)
 import sql_flatten_common  # noqa: E402
-from sql_flatten_common import run_transformation  # noqa: E402
+from sql_flatten_common import reject_truncate_target, run_transformation  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -112,9 +100,7 @@ RETRIES_VARIABLE = "task_orchestrator_task_retries"
 DEFAULT_RETRIES = 1
 WINDOW_START_OVERRIDE_VARIABLE = "bronze_to_silver_window_start_override"
 WINDOW_END_OVERRIDE_VARIABLE = "bronze_to_silver_window_end_override"
-TWIN_MODULE_SUFFIX = "_test_transformation"
-PYTHON_MODULE_SUFFIX = "_transformation"
-PYTHON_TRANSFORM_TASK_ID = "transform_bronze_to_silver"
+MODULE_SUFFIX = "_transformation"
 ENTITY_EXECUTION_TIMEOUT = timedelta(hours=2)
 TASK_POD_REQUESTS = {"cpu": "100m", "memory": "512Mi"}
 TASK_POD_LIMITS = {"cpu": "1", "memory": "2Gi"}
@@ -133,19 +119,19 @@ def _resolve_schedule(raw: str) -> str | CronDataIntervalTimetable | None:
 
 
 def _available_entities() -> list[str]:
-    """Entity names that have a twin module, e.g. `project_task` for
-    project_task_test_transformation.py."""
-    paths = glob.glob(os.path.join(_TWINS_DIR, f"*{TWIN_MODULE_SUFFIX}.py"))
-    return sorted(os.path.basename(path)[: -len(f"{TWIN_MODULE_SUFFIX}.py")] for path in paths)
+    """Entity names that have a module here, e.g. `project_task` for
+    project_task_transformation.py."""
+    paths = glob.glob(os.path.join(_ENTITIES_DIR, f"*{MODULE_SUFFIX}.py"))
+    return sorted(os.path.basename(path)[: -len(f"{MODULE_SUFFIX}.py")] for path in paths)
 
 
 def _load_spec(entity: str):
-    """The twin's EntitySpec, or None (logged) if the entity can't be run."""
-    module_name = f"{entity}{TWIN_MODULE_SUFFIX}"
-    if not os.path.exists(os.path.join(_TWINS_DIR, f"{module_name}.py")):
-        log.warning("Entity '%s' has no twin module %s.py in %s; skipping it.", entity, module_name, _TWINS_DIR)
+    """The entity's EntitySpec, or None (logged) if the entity can't be run."""
+    module_name = f"{entity}{MODULE_SUFFIX}"
+    if not os.path.exists(os.path.join(_ENTITIES_DIR, f"{module_name}.py")):
+        log.warning("Entity '%s' has no module %s.py in %s; skipping it.", entity, module_name, _ENTITIES_DIR)
         return None
-    # SPEC only: don't let the import build the twin's DAG (sql_flatten_common.BUILD_DAGS).
+    # SPEC only: don't let the import build the entity's DAG (sql_flatten_common.BUILD_DAGS).
     sql_flatten_common.BUILD_DAGS = False
     try:
         spec = importlib.import_module(module_name).SPEC
@@ -154,32 +140,10 @@ def _load_spec(entity: str):
         return None
     finally:
         sql_flatten_common.BUILD_DAGS = True
-    if spec.python_entity != entity:
-        log.warning("Entity '%s': %s declares python_entity '%s'; skipping it.", entity, module_name, spec.python_entity)
+    if spec.entity != entity:
+        log.warning("Entity '%s': %s declares entity '%s'; skipping it.", entity, module_name, spec.entity)
         return None
     return spec
-
-
-def _available_python_entities() -> list[str]:
-    """Entity names that have a Python DAG module in ../, e.g. `project_task`
-    for project_task_transformation.py (twins live elsewhere and are excluded)."""
-    paths = glob.glob(os.path.join(_DAGS_DIR, f"*{PYTHON_MODULE_SUFFIX}.py"))
-    names = (os.path.basename(path)[: -len(f"{PYTHON_MODULE_SUFFIX}.py")] for path in paths)
-    return sorted(name for name in names if not name.endswith("_test"))
-
-
-def run_python_transformation(entity: str, window: dict) -> None:
-    """Runs the Python DAG's own transform for one entity, in this task's process.
-    Its factory (`<entity>_transformation`) is called to get the DAG object, and
-    the TaskFlow task's python_callable is called with the window dict, exactly
-    as the DAG's parse_time_window would hand it over."""
-    if _DAGS_DIR not in sys.path:
-        sys.path.insert(0, _DAGS_DIR)
-    module_name = f"{entity}{PYTHON_MODULE_SUFFIX}"
-    module = importlib.import_module(module_name)
-    python_dag = getattr(module, module_name)()
-    transform = python_dag.get_task(PYTHON_TRANSFORM_TASK_ID).python_callable
-    transform({"start_time": window["start_time"], "end_time": window["end_time"]})
 
 
 def _task_retries() -> int:
@@ -220,6 +184,7 @@ def _resolve_time_window(**context) -> dict:
     the trigger orchestrator."""
     dag_run = context["dag_run"]
     conf = dag_run.conf or {}
+    reject_truncate_target(conf)
     configured_schedule = Variable.get(SCHEDULE_VARIABLE, default_var=DEFAULT_SCHEDULE).strip().lower()
     override_eligible = dag_run.run_type != DagRunType.SCHEDULED or configured_schedule == "@once"
 
@@ -249,8 +214,7 @@ def _resolve_time_window(**context) -> dict:
             f"start_time/end_time in dag_run.conf or set both '{WINDOW_START_OVERRIDE_VARIABLE}' and "
             f"'{WINDOW_END_OVERRIDE_VARIABLE}'."
         )
-    return {"start_time": start_time, "end_time": end_time,
-            "truncate_target": bool(conf.get("truncate_target", False))}
+    return {"start_time": start_time, "end_time": end_time}
 
 
 def _build_dag(dag_id: str, description: str, tags: list[str], runners: list[tuple[str, object]]) -> DAG:
@@ -301,30 +265,14 @@ def _build_dag(dag_id: str, description: str, tags: list[str], runners: list[tup
 _entity_order = Variable.get(ENTITY_ORDER_VARIABLE, deserialize_json=True, default_var=None)
 
 
-def _sql_runner(spec):
+def _runner(spec):
     return lambda window: run_transformation(spec, window)
 
 
-def _python_runner(entity: str):
-    return lambda window: run_python_transformation(entity, window)
-
-
-_sql_entities = _entity_order if _entity_order is not None else _available_entities()
-sql_dag = _build_dag(
+_entities = _entity_order if _entity_order is not None else _available_entities()
+dag = _build_dag(
     "bronze_to_silver_task_orchestrator",
-    "Runs every entity's SQL-side bronze-to-silver transform as a task of this one DAG.",
-    ["bronze-to-silver", "orchestrator", "sql-test"],
-    [(entity, _sql_runner(spec)) for entity in _sql_entities if (spec := _load_spec(entity)) is not None],
-)
-
-_python_available = set(_available_python_entities())
-_python_entities = _entity_order if _entity_order is not None else sorted(_python_available)
-for _missing in [entity for entity in _python_entities if entity not in _python_available]:
-    log.warning("Entity '%s' has no Python DAG module %s%s.py in %s; skipping it.",
-                _missing, _missing, PYTHON_MODULE_SUFFIX, _DAGS_DIR)
-python_dag = _build_dag(
-    "bronze_to_silver_python_task_orchestrator",
-    "Runs every entity's Python DAG transform as a task of this one DAG (benchmark twin of the SQL orchestrator).",
-    ["bronze-to-silver", "orchestrator", "python"],
-    [(entity, _python_runner(entity)) for entity in _python_entities if entity in _python_available],
+    "Runs every entity's bronze-to-silver transform as a task of this one DAG.",
+    ["bronze-to-silver", "orchestrator", "sql"],
+    [(entity, _runner(spec)) for entity in _entities if (spec := _load_spec(entity)) is not None],
 )

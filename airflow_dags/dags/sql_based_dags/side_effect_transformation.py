@@ -1,18 +1,18 @@
 """
-side_effect_test_transformation.py
+side_effect_transformation.py
 
-TEST twin of side_effect_transformation.py for the `side_effect` entity: the
+Production bronze-to-silver DAG replacing the Python side_effect_transformation.py
+(kept for reference in airflow_dags/python_reference/) for the `side_effect` entity: the
 flatten + write runs inside ClickHouse as one INSERT ... SELECT per slice
-(see sql_flatten_common.py for how a run works). Writes to
-<database>.side_effect_entity_sql_test, never to side_effect_entity.
-Entity name `side_effect_test` (dag_id side_effect_test_transformation).
+(see sql_flatten_common.py for how a run works). Writes to <database>.side_effect_entity.
+dag_id side_effect_transformation.
 
 The Python DAG resolves four dependent lookup rounds per chunk (task ->
 project beneficiary -> individual, and the user -> project bridge); here they
 are four slice-bounded joins in the one statement, each collapsed to one row
 per key the way the Python DAG's `ORDER BY id ASC LIMIT 1 BY <key>` does.
 
-Known differences from side_effect_transformation.py (all deliberate)
+Known differences from the Python side_effect_transformation.py (all deliberate)
     - stg_side_effect is read with FINAL (the Python DAG reads every version).
     - The task, beneficiary and individual sides take each row's newest version
       before picking the lowest id per key (the Python DAG picks the lowest id
@@ -37,7 +37,7 @@ from sql_flatten_common import (  # noqa: E402
     address_join_sql,
     age_expressions,
     boundary_lookup,
-    build_sql_test_dag,
+    build_sql_dag,
     field_pairs_sql,
     json_int_or_null_sql,
     json_object_sql,
@@ -316,8 +316,7 @@ SILVER_COLUMNS: list[tuple[str, str]] = [
 
 
 SPEC = EntitySpec(
-    entity="side_effect_test",
-    python_entity="side_effect",
+    entity="side_effect",
     driving_table="stg_side_effect",
     slice_filter_class=SideEffectSliceFilter,
     target=SilverTarget(
@@ -334,4 +333,4 @@ SPEC = EntitySpec(
 
 # The Airflow DAG object for this entity, built from SPEC by sql_flatten_common
 # (airflow safe-mode discovery needs the words "airflow" and "dag" in this file).
-dag = build_sql_test_dag(SPEC)
+dag = build_sql_dag(SPEC)
