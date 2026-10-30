@@ -20,6 +20,67 @@ Airflow DAGs that populate the ClickHouse bronze tables from the raw event store
 - `dags/egov_api_utils.py` — shared helpers for calling external eGov DIGIT services (boundary-service, user-service, MDMS) and for enriching a chunk of rows from them (see [Calling external eGov services](#calling-external-egov-services)).
 - `dags/.airflowignore` — excludes the four importable-but-not-DAG modules above (`clickhouse_utils.py`, `egov_api_utils.py`, `raw_event_bronze_config.py`, `raw_event_bronze_processor.py`) from Airflow's DAG discovery, so they don't show up as spurious DAG import errors. They stay importable from the DAGs as normal. Entries are matched as **globs** (`core.dag_ignore_file_syntax = glob`), and edits only take effect once the dag-processor restarts.
 
+## First-time setup: what you must configure
+
+Everything below is needed once per Airflow deployment. Service URLs go in the **Helm chart**; Connections, the pool and
+Variables are created in the **Airflow UI**. Anything not listed here has a working default.
+
+### 1. Helm chart: eGov service URLs
+
+Add these under the Airflow chart's `.Values.env` (that list also reaches the KubernetesExecutor worker pods that run the
+tasks; `extraEnv` does not). The DAGs read them when they start, so restart Airflow after changing one.
+
+| Env var | What it does for you | If it's missing |
+|---|---|---|
+| `EGOV_BOUNDARY_SERVICE_BASE_URL` | Boundary-service host. Fills every silver row's boundary columns (`level_one_code` … `level_nine_code`), which every dashboard filters and groups by | Boundary columns stay blank |
+| `EGOV_USER_SERVICE_BASE_URL` | User-service host. Fills `user_name`, `name_of_user`, `role` and `user_address` (who did the work) | `user_name` shows the user id; name, role and address stay blank |
+| `EGOV_MDMS_SERVICE_BASE_URL` | MDMS host. Picks the one role to show when a user has several | Users with more than one role get a blank `role` |
+| `EGOV_WORKFLOW_SERVICE_BASE_URL` | Workflow-service host. Fills the workflow status of expense bills | Bill workflow status stays blank |
+
+Each value is `scheme://host:port` only, e.g. `http://boundary-service.egov:8080`. A missing URL never fails a run:
+that enrichment is skipped and one warning is logged. Details: [Configuring eGov service URLs via environment
+variables](#configuring-egov-service-urls-via-environment-variables).
+
+### 2. Airflow UI: Connections (Admin → Connections)
+
+| Connection Id | Type | What it does for you | Fields |
+|---|---|---|---|
+| `clickhouse_default` | HTTP | The ClickHouse every DAG reads from and writes to | Host, Port `8123`, Login, Password, and **Schema = the database** the bronze and silver tables live in (e.g. `analytics`) |
+| `airflow_api_default` | HTTP | Lets the bronze→silver orchestrator check that an entity's DAG exists before triggering it | Host = this Airflow's own base URL incl. scheme (e.g. `http://airflow-webserver:8080`), Login/Password of an account with API read access |
+
+Details: [Connecting entity DAGs to ClickHouse](#connecting-entity-dags-to-clickhouse),
+[Connecting the orchestrator to Airflow's own REST API](#connecting-the-orchestrator-to-airflows-own-rest-api).
+
+### 3. Airflow UI: Pool (Admin → Pools)
+
+| Pool | Slots | What it does for you |
+|---|---|---|
+| `clickhouse_bronze_extraction` | `5` | Caps how many raw→bronze table copies hit ClickHouse at once. The raw→bronze DAG doesn't run until it exists |
+
+### 4. Airflow UI: Variables (Admin → Variables)
+
+**Required**
+
+| Variable | What it does for you | Value to start with |
+|---|---|---|
+| `entity_transformation_order` | The entities the hourly orchestrator updates in silver, in this order. An entity not listed is never updated; with the Variable unset nothing reaches silver | `["project", "project_staff", "project_beneficiary", "household", "household_member", "project_task", "stock", "stock_reconciliation", "referral", "hf_referral", "side_effect", "service_task", "user_action", "pgr", "device_token", "attendance_register", "attendance_staff", "attendee", "attendance_log", "muster_roll", "bill", "bill_detail"]` |
+
+**Optional** (set only to change the default)
+
+| Variable | Default | What it does for you |
+|---|---|---|
+| `raw_to_bronze_schedule` | `0 * * * *` (hourly) | How often new raw events are copied into bronze |
+| `bronze_to_silver_orchestrator_schedule` | `@hourly` | How often silver is updated from bronze. `"None"` = only when triggered by hand |
+| `bronze_to_silver_chunk_size` | `5000` | Rows per ClickHouse statement. Lower it if a run fails on ClickHouse memory or query-size limits; higher means fewer, larger statements |
+| `bronze_to_silver_window_start_override` and `bronze_to_silver_window_end_override` | unset | Reprocess a specific past period: set both (ISO datetimes) and trigger the orchestrator by hand. Ignored on scheduled runs; delete both when done |
+
+Details and caveats: [Configuring the bronze→silver orchestrator via Airflow
+Variables](#configuring-the-bronzesilver-orchestrator-via-airflow-variables).
+
+**Don't** put Variables or Connections in the Helm chart (`AIRFLOW_VAR_*` / `AIRFLOW_CONN_*` env vars): Airflow reads
+those before the UI, so a value set there silently overrides the UI and edits in **Admin → Variables / Connections**
+appear to save but do nothing.
+
 ## Raw event → bronze
 
 `raw_event_to_bronze` is a single DAG, not an orchestrator-plus-child-DAGs chain like the bronze→silver side. Per run it:
@@ -97,6 +158,10 @@ Nothing about *which* entities run, in *what order*, or *how often* the orchestr
 | `bronze_to_silver_chunk_size`            | Rows of the driving bronze table per ClickHouse `INSERT … SELECT` slice of every entity DAG (bounds per-query RAM and the inline VALUES sizes). A slice whose lookup or statement is too large is split in half until it fits | A positive integer, e.g.`5000` or `10000`                                                                                                                                                                                                  | `5000`                                                                         |
 | `bronze_to_silver_window_start_override` | Manually pins the start of the bronze read window for the next orchestrator run, instead of using this run's`data_interval_start` | An ISO 8601 datetime string, e.g.`"2026-08-01T00:00:00+00:00"`                                                                                                                                                                               | unset → falls back to`data_interval_start`                                    |
 | `bronze_to_silver_window_end_override`   | Manually pins the end of the bronze read window for the next orchestrator run, instead of using this run's`data_interval_end`     | An ISO 8601 datetime string                                                                                                                                                                                                                    | unset → falls back to`data_interval_end`                                      |
+| `task_orchestrator_entity_order`         | Only for the optional `bronze_to_silver_task_orchestrator` DAG: which entities it runs, in order | JSON array of entity keys, as above | every entity in `dags/sql_based_dags/` |
+| `task_orchestrator_schedule`             | Only for `bronze_to_silver_task_orchestrator`: how often it runs | Same values as `bronze_to_silver_orchestrator_schedule` | `None` (manual only) |
+| `task_orchestrator_max_active_tasks`     | Only for `bronze_to_silver_task_orchestrator`: entities run at the same time | A positive integer (`1` = one at a time) | `3` |
+| `task_orchestrator_task_retries`         | Only for `bronze_to_silver_task_orchestrator`: Airflow retries per entity task | A non-negative integer | `1` |
 
 eGov service base URLs (boundary-service, user-service, MDMS, workflow-service) are **not** Airflow Variables — see [Configuring eGov service URLs via environment variables](#configuring-egov-service-urls-via-environment-variables) below for why and how to set them.
 
@@ -189,13 +254,13 @@ airflow connections add clickhouse_default \
 
 or via the UI: **Admin → Connections → +**, `Connection Id` = `clickhouse_default`, `Connection Type` = `HTTP`, then fill in host/port/login/password/schema (database name) as above.
 
-In production, this Connection doesn't need to be created via the CLI/UI at all — set it as an `AIRFLOW_CONN_CLICKHOUSE_DEFAULT` environment variable in URI form (e.g. `AIRFLOW_CONN_CLICKHOUSE_DEFAULT=clickhouse://user:pass@host:8123/analytics`), populated by the Helm chart from a Kubernetes Secret. Airflow resolves a `conn_id` by checking this env var first, then any configured secrets backend, and only falls back to a manually-created Connection in the metadata DB — the `airflow connections add ...` command above is the local-dev equivalent of that env var, not something ops repeats by hand per deployment.
+On a deployed Airflow, create it the same way, in **Admin → Connections**. The schema is the database the DAGs read bronze from and write silver to.
 
 ## Connecting the orchestrator to Airflow's own REST API
 
 `dags/bronze-to-silver_orcestrator.py` checks whether each entity's target DAG is registered before triggering it, via Airflow's stable REST API (`GET /api/v2/dags/{dag_id}`) rather than a direct metadata-DB query — task code under Airflow 3's Task SDK can't access the metadata DB directly, regardless of executor. This needs a Connection, `conn_id="airflow_api_default"`, whose `host` is the full base URL (including scheme) of this Airflow instance's own webserver, and whose `login`/`password` are credentials for an account with API read access.
 
-In production, this Connection is expected to be provisioned by the deployment's Helm chart as a Kubernetes-secret-backed `AIRFLOW_CONN_AIRFLOW_API_DEFAULT` environment variable in URI form (e.g. `AIRFLOW_CONN_AIRFLOW_API_DEFAULT=http://user:pass@airflow-webserver.airflow.svc.cluster.local:8080`) — same resolution chain as `clickhouse_default` above (env var, then secrets backend, then metadata DB), not created by hand.
+On a deployed Airflow, create it in **Admin → Connections** the same way, with the webserver's in-cluster URL as the host (e.g. `http://airflow-webserver.airflow.svc.cluster.local:8080`).
 
 For local dev, create it via the CLI, using the generated admin password from `$AIRFLOW_HOME/simple_auth_manager_passwords.json.generated`:
 
@@ -218,7 +283,7 @@ Unlike the Airflow Variables above, the base URLs *and search paths* for the DIG
 | `EGOV_BOUNDARY_SERVICE_BASE_URL`         | Base URL for boundary-service calls                                                      | A host URL, e.g.`"http://localhost:8081"` | unset — boundary lookups are skipped (logged once, not per row)        |
 | `EGOV_USER_SERVICE_BASE_URL`             | Base URL for user-service calls                                                          | A host URL, e.g.`"http://localhost:8284"` | unset — user lookups are skipped (logged once, not per row)            |
 | `EGOV_MDMS_SERVICE_BASE_URL`             | Base URL for MDMS calls (used only when a user has more than one role, to rank/pick one) | A host URL                                  | unset — role-ranking lookups are skipped (logged once, not per row)    |
-| `EGOV_WORKFLOW_SERVICE_BASE_URL`         | Base URL for workflow-service calls (bill/PGR workflow-status enrichment)                | A host URL                                  | unset — workflow-status lookups are skipped (logged once, not per row) |
+| `EGOV_WORKFLOW_SERVICE_BASE_URL`         | Base URL for workflow-service calls (expense-bill workflow-status enrichment)                | A host URL                                  | unset — workflow-status lookups are skipped (logged once, not per row) |
 | `EGOV_BOUNDARY_RELATIONSHIP_SEARCH_PATH` | Path appended to the boundary-service base URL                                           | A path starting with`/`                   | `/boundary-service/boundary-relationships/_search`                    |
 | `EGOV_USER_SEARCH_PATH`                  | Path appended to the user-service base URL                                               | A path starting with`/`                   | `/user/_search`                                                       |
 | `EGOV_MDMS_SEARCH_PATH`                  | Path appended to the MDMS base URL                                                       | A path starting with`/`                   | `/egov-mdms-service/v1/_search`                                       |
@@ -228,7 +293,7 @@ The four `*_PATH` vars exist so a DIGIT deployment that routes these differently
 
 **Why env vars instead of Airflow Variables**: the external calls these back in `egov_api_utils.py` are made once per row (or per cache-miss) across a chunk of hundreds/thousands of rows, across every entity DAG. `Variable.get()` is a network round-trip to the Airflow webserver/metadata DB on every call — at that call volume it noticeably balloons task time and memory. `os.getenv()` is a zero-cost in-process read, so `egov_api_utils.py` reads each of these once at import time into a module-level constant (`BOUNDARY_SERVICE_BASE_URL`, etc.) and every call site just uses that constant directly — no per-call lookup at all. If a base URL is unset, that service's calls are skipped outright (not attempted-then-failed) and a single warning is logged the first time, not once per row — these constants can't change mid-process, so there's nothing to gain from retrying.
 
-In production, these are set directly on the worker container by the Helm chart (no Connection/Variable indirection needed, same idea as `AIRFLOW_CONN_CLICKHOUSE_DEFAULT` above). For local dev, `egov_api_utils.py` automatically loads `airflow_dags/.env` on import (via `python-dotenv`, already part of this venv's dependency tree — no new install needed) — just fill in the values there and restart the scheduler/webserver (or trigger a fresh task run); no manual `export`/`source` needed, and it never overrides a real env var that's already set (so it's harmless to leave in place even if you *also* export these manually). `airflow_dags/.env` is gitignored — per-developer, never committed — and production doesn't use it at all (there's no such file in the deployed image).
+In production, these are set in the Helm chart's `.Values.env` (see [First-time setup](#first-time-setup-what-you-must-configure)). For local dev, `egov_api_utils.py` automatically loads `airflow_dags/.env` on import (via `python-dotenv`, already part of this venv's dependency tree — no new install needed) — just fill in the values there and restart the scheduler/webserver (or trigger a fresh task run); no manual `export`/`source` needed, and it never overrides a real env var that's already set (so it's harmless to leave in place even if you *also* export these manually). `airflow_dags/.env` is gitignored — per-developer, never committed — and production doesn't use it at all (there's no such file in the deployed image).
 
 Unlike an Airflow Variable, these aren't settable via the Airflow UI/CLI at runtime — changing one requires restarting the Airflow process(es) that read it.
 
