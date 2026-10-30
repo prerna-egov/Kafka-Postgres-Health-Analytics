@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS analytics.boundary_hierarchy_localization_dim (
     locale                  LowCardinality(String),
     created_by              String,
     last_modified_by        String,
-    created_date            DateTime64(3),         
-    last_modified_date      DateTime64(3)          
+    created_date            DateTime64(3, 'UTC'),         
+    last_modified_date      DateTime64(3, 'UTC')          
 )
 ENGINE = ReplacingMergeTree(last_modified_date)
 ORDER BY (tenant_id, hierarchy_type, module, locale, code)
