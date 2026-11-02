@@ -1,17 +1,14 @@
 """
 bronze_to_silver_task_orchestrator.py
 
-One DAG, bronze_to_silver_task_orchestrator, that runs every entity's
-bronze-to-silver transform (the <entity>_transformation.py files in this
-folder) as TASKS of one DAG instead of as separately triggered DAGs: each
-`transform_<entity>` task calls `run_transformation(SPEC, window)`, the same
-code path as the entity DAG's own transform task.
-
-Compared with bronze-to-silver_orcestrator.py (TriggerDagRunOperator per
-entity), per entity this drops: the REST-API existence / unpause check, the
-separate DAG run and its parse_time_window task, and the trigger's 30 s
-completion poke. Each entity is a plain task, so retries, logs and durations
-are per entity in this DAG's grid.
+The bronze-to-silver DAG, bronze_to_silver_task_orchestrator, scheduled hourly
+by default. Each run resolves one time window, then runs every entity's
+transformation (the <entity>_transformation.py files in this folder) as a TASK
+of this DAG: each `transform_<entity>` task calls `run_transformation(SPEC,
+window)` directly -- no other DAG is triggered. Retries, logs and durations are
+therefore per entity in this DAG's grid. (Each entity file also registers a
+standalone `<entity>_transformation` DAG on the same code path, for running one
+entity by hand.)
 
 Ordering and failure semantics
     - Every transform task depends only on resolve_time_window. The DAG's
@@ -33,29 +30,29 @@ Ordering and failure semantics
       re-running the entity for the whole window -- except when every failed
       slice hit a size guard, which fails without retry (lower the chunk size).
     - An entity name with no module in this folder, or whose module fails to import,
-      is skipped at parse time with a warning, like the trigger orchestrator
-      skips an entity whose DAG isn't registered.
+      is skipped at parse time with a warning; the other entities still run.
 
 Variables (all read at parse time except the window overrides)
     task_orchestrator_entity_order     JSON list of entity names, e.g. ["project", "project_task"];
                                        default: every entity module in this folder, alphabetical
-    task_orchestrator_schedule         cron / preset / "None"; default "None" (manual only), so
-                                       deploying this next to the trigger orchestrator doesn't
-                                       double the hourly load
+    task_orchestrator_schedule         cron / preset / "None" (manual only); default "@hourly"
     task_orchestrator_max_active_tasks entities run at once; default 3 (1 = serial). Parse-time, so a
                                        change applies once the file is reparsed, to runs created after
     task_orchestrator_task_retries     Airflow retries per task; default 1. Parse-time, same as above
+    task_orchestrator_task_timeout_minutes
+                                       time limit per entity task; default 120. Parse-time
     bronze_to_silver_chunk_size        rows per slice, shared by every entity;
                                        default 5000
     bronze_to_silver_window_start_override / _end_override
-                                       shared with the trigger orchestrator, same rules
+                                       read at run time, only on manual/backfill runs (or an "@once"
+                                       schedule) and only when both are set: reprocess that window
 
-Task pods (KubernetesExecutor) request TASK_POD_REQUESTS instead of the chart's
-0.5 CPU / 1 GiB: a task only plans slices, calls the eGov APIs and sends one
-INSERT at a time (measured on unified-dev: about 5 millicores and 290 MiB, max
-313 MiB), and the smaller request still schedules on a nearly full cluster. The
-limits stay as in the chart. Without the kubernetes client (local runs, no
-KubernetesExecutor) no override is set.
+Task pods (KubernetesExecutor) request TASK_POD_REQUESTS instead of the
+chart's 0.5 CPU / 1 GiB: a task only plans slices, calls the eGov APIs and sends
+one INSERT at a time (measured on unified-dev: about 5 millicores and 290 MiB,
+max 313 MiB), and the smaller request still schedules on a nearly full cluster.
+The ClickHouse work itself runs in the ClickHouse pod, not here. Without the
+kubernetes client (local runs, no KubernetesExecutor) no override is set.
 
 A manual run may also pass {"start_time", "end_time"} in dag_run.conf; conf
 wins over the override Variables. truncate_target is refused: the entities
@@ -93,7 +90,7 @@ log = logging.getLogger(__name__)
 
 ENTITY_ORDER_VARIABLE = "task_orchestrator_entity_order"
 SCHEDULE_VARIABLE = "task_orchestrator_schedule"
-DEFAULT_SCHEDULE = "None"
+DEFAULT_SCHEDULE = "@hourly"
 MAX_ACTIVE_TASKS_VARIABLE = "task_orchestrator_max_active_tasks"
 DEFAULT_MAX_ACTIVE_TASKS = 3
 RETRIES_VARIABLE = "task_orchestrator_task_retries"
@@ -101,15 +98,16 @@ DEFAULT_RETRIES = 1
 WINDOW_START_OVERRIDE_VARIABLE = "bronze_to_silver_window_start_override"
 WINDOW_END_OVERRIDE_VARIABLE = "bronze_to_silver_window_end_override"
 MODULE_SUFFIX = "_transformation"
-ENTITY_EXECUTION_TIMEOUT = timedelta(hours=2)
+TIMEOUT_MINUTES_VARIABLE = "task_orchestrator_task_timeout_minutes"
+DEFAULT_TIMEOUT_MINUTES = 120
 TASK_POD_REQUESTS = {"cpu": "100m", "memory": "512Mi"}
 TASK_POD_LIMITS = {"cpu": "1", "memory": "2Gi"}
 
 
 def _resolve_schedule(raw: str) -> str | CronDataIntervalTimetable | None:
-    """Same rules as bronze-to-silver_orcestrator.py: "none" -> unscheduled,
-    "@once" as-is, anything else -> CronDataIntervalTimetable so a scheduled
-    run gets a real [previous tick, this tick) window."""
+    """"none" -> unscheduled, "@once" as-is, anything else (cron or preset) ->
+    CronDataIntervalTimetable, so a scheduled run gets a real [previous tick,
+    this tick) window rather than Airflow's zero-width CronTriggerTimetable one."""
     normalized = raw.strip()
     if normalized.lower() == "none":
         return None
@@ -161,6 +159,21 @@ def _task_retries() -> int:
     return retries
 
 
+def _task_timeout() -> timedelta:
+    """Time limit per entity task from TIMEOUT_MINUTES_VARIABLE; a value that
+    isn't a positive integer falls back to DEFAULT_TIMEOUT_MINUTES with a warning."""
+    raw = Variable.get(TIMEOUT_MINUTES_VARIABLE, default_var=DEFAULT_TIMEOUT_MINUTES)
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes <= 0:
+        log.warning("Variable '%s' = %r is not a positive integer; using %d.",
+                    TIMEOUT_MINUTES_VARIABLE, raw, DEFAULT_TIMEOUT_MINUTES)
+        minutes = DEFAULT_TIMEOUT_MINUTES
+    return timedelta(minutes=minutes)
+
+
 def _task_pod_executor_config() -> dict:
     """pod_override for the KubernetesExecutor's task container (named `base`)."""
     if k8s is None:
@@ -180,8 +193,8 @@ default_args = {
 def _resolve_time_window(**context) -> dict:
     """dag_run.conf {start_time, end_time} first (manual runs); then, for a
     manual/backfill run or an @once schedule, the override Variables; else
-    this run's data_interval. Same guard against a forgotten override as
-    the trigger orchestrator."""
+    this run's data_interval. A recurring scheduled run never reads the
+    overrides, so a forgotten override can't freeze every later run."""
     dag_run = context["dag_run"]
     conf = dag_run.conf or {}
     reject_truncate_target(conf)
@@ -220,6 +233,7 @@ def _resolve_time_window(**context) -> dict:
 def _build_dag(dag_id: str, description: str, tags: list[str], runners: list[tuple[str, object]]) -> DAG:
     """One orchestrator DAG: resolve_time_window -> transform_<entity> (one per
     runner, `runner(window)`) -> all_entities_succeeded."""
+    task_timeout = _task_timeout()
     with DAG(
         dag_id=dag_id,
         description=description,
@@ -240,7 +254,7 @@ def _build_dag(dag_id: str, description: str, tags: list[str], runners: list[tup
                 task_id=f"transform_{entity}",
                 priority_weight=priority_weight,
                 weight_rule="absolute",
-                execution_timeout=ENTITY_EXECUTION_TIMEOUT,
+                execution_timeout=task_timeout,
             )
             def transform(window: dict) -> None:
                 runner(window)
