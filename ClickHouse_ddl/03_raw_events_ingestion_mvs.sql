@@ -236,3 +236,9 @@ TO analytics.device_tokens_events_raw
 AS
 SELECT raw
 FROM analytics.kafka_device_tokens_events;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.mv_user_location_events_raw
+TO analytics.user_location_events_raw
+AS
+SELECT raw
+FROM analytics.kafka_user_location_events;

@@ -540,3 +540,17 @@ SETTINGS
     kafka_num_consumers = 1,
     kafka_max_block_size = 65536,
     kafka_skip_broken_messages = 100;
+
+CREATE TABLE IF NOT EXISTS analytics.kafka_user_location_events
+(
+    raw String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-kraft.backbone.svc.cluster.local:9092',
+    kafka_topic_list = 'unified-dev.health.user_location',
+    kafka_group_name = 'clickhouse-user-location-consumer',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 1,
+    kafka_max_block_size = 65536,
+    kafka_skip_broken_messages = 100;
