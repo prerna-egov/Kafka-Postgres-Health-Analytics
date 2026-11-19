@@ -1048,17 +1048,16 @@ GROUP BY target_type;
 -- ----------------------------------------------------------------------------
 -- NET DISTRIBUTION
 -- ----------------------------------------------------------------------------
--- dm_smc_administered_base holds every campaign's tasks; net deliveries are
--- delivered_to = 'HOUSEHOLD' AND is_delivered.
+-- dm_itn_household_deliveries holds household tasks only; net deliveries are
+-- the is_delivered rows.
 
 -- KPI 13  Nets distributed
--- dm_smc_administered_base: nets on delivered household tasks.
+-- dm_itn_household_deliveries: nets on delivered household tasks.
 SELECT level_three_code AS district,
-       sum(resource_quantity_sum) AS nets_distributed
-FROM dm_smc_administered_base
+       sum(quantity_sum) AS nets_distributed
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY district
 ORDER BY district;
@@ -1071,11 +1070,10 @@ SELECT district,
 FROM
 (
     SELECT level_three_code AS district,
-           sum(resource_quantity_sum) AS nets_distributed
-    FROM dm_smc_administered_base
+           sum(quantity_sum) AS nets_distributed
+    FROM dm_itn_household_deliveries
     WHERE campaign_number = {campaign_number:String}
       AND level_two_code  = {province:String}
-      AND delivered_to    = 'HOUSEHOLD'
       AND is_delivered
     GROUP BY district
 ) AS given
@@ -1095,12 +1093,11 @@ ORDER BY district;
 -- KPI 15  Households that received nets
 -- delivery records and distinct households; charts use either.
 SELECT level_three_code AS district,
-       sum(task_rows)                    AS delivery_records,
-       uniqExactMerge(administered_uniq) AS households_received_nets
-FROM dm_smc_administered_base
+       sum(task_rows)                  AS delivery_records,
+       uniqExactMerge(households_uniq) AS households_received_nets
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY district
 ORDER BY district;
@@ -1113,11 +1110,10 @@ SELECT district,
 FROM
 (
     SELECT level_three_code AS district,
-           uniqExactMerge(administered_uniq) AS households_received_nets
-    FROM dm_smc_administered_base
+           uniqExactMerge(households_uniq) AS households_received_nets
+    FROM dm_itn_household_deliveries
     WHERE campaign_number = {campaign_number:String}
       AND level_two_code  = {province:String}
-      AND delivered_to    = 'HOUSEHOLD'
       AND is_delivered
     GROUP BY district
 ) AS reached
@@ -1138,10 +1134,9 @@ ORDER BY district;
 -- household tasks with status CLOSED_HOUSEHOLD.
 SELECT level_three_code AS district,
        sum(task_rows) AS closed_households
-FROM dm_smc_administered_base
+FROM dm_itn_household_deliveries
 WHERE campaign_number       = {campaign_number:String}
   AND level_two_code        = {province:String}
-  AND delivered_to          = 'HOUSEHOLD'
   AND administration_status = 'CLOSED_HOUSEHOLD'
 GROUP BY district
 ORDER BY district;
@@ -1151,13 +1146,12 @@ ORDER BY district;
 -- Actual, per day (households_visited counts every household task).
 SELECT event_date,
        sum(task_rows)                                               AS households_visited,
-       sumIf(resource_quantity_sum, is_delivered)                   AS nets_distributed,
+       sumIf(quantity_sum, is_delivered)                            AS nets_distributed,
        sumIf(member_count_sum, is_delivered)                        AS population_covered,
        sumIf(task_rows, administration_status = 'CLOSED_HOUSEHOLD') AS closed_households
-FROM dm_smc_administered_base
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
 GROUP BY event_date
 ORDER BY event_date;
 
@@ -1174,28 +1168,18 @@ GROUP BY target_type;
 -- KPI 19  Nets distributed per day vs plan
 -- nets and household deliveries per day vs target per day.
 SELECT event_date,
-       sum(resource_quantity_sum) AS nets_distributed,
-       sum(task_rows)             AS household_deliveries
-FROM dm_smc_administered_base
+       sum(quantity_sum) AS nets_distributed,
+       sum(task_rows)    AS household_deliveries
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY event_date
 ORDER BY event_date;
 
 -- KPI 20  People given nets one by one, per day vs plan
--- dm_smc_administered_by_beneficiary: people with an individual delivery per day.
-SELECT event_date,
-       uniqExactMerge(administered_uniq) AS people_given_nets
-FROM dm_smc_administered_by_beneficiary
-WHERE campaign_number       = {campaign_number:String}
-  AND level_two_code        = {province:String}
-  AND delivered_to          = 'INDIVIDUAL'
-  AND is_delivered
-  AND administration_status = 'ADMINISTRATION_SUCCESS'
-GROUP BY event_date
-ORDER BY event_date;
+-- Not used for ITN campaigns: nets go to households, not individuals, so the
+-- chart is empty. No ITN mart serves it.
 
 -- ----------------------------------------------------------------------------
 -- POPULATION COVERED
@@ -1203,13 +1187,12 @@ ORDER BY event_date;
 -- member_count_sum counts a household once per delivered task.
 
 -- KPI 21  Population covered (people in households that received nets)
--- dm_smc_administered_base.member_count_sum on delivered household tasks.
+-- member_count_sum on delivered household tasks.
 SELECT level_three_code      AS district,
        sum(member_count_sum) AS population_covered
-FROM dm_smc_administered_base
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY district
 ORDER BY district;
@@ -1223,10 +1206,9 @@ FROM
 (
     SELECT level_three_code      AS district,
            sum(member_count_sum) AS population_covered
-    FROM dm_smc_administered_base
+    FROM dm_itn_household_deliveries
     WHERE campaign_number = {campaign_number:String}
       AND level_two_code  = {province:String}
-      AND delivered_to    = 'HOUSEHOLD'
       AND is_delivered
     GROUP BY district
 ) AS covered
@@ -1246,12 +1228,11 @@ ORDER BY district;
 -- KPI 23  Population covered, estimated as nets x 1.8
 -- nets distributed x 1.8.
 SELECT level_three_code AS district,
-       sum(resource_quantity_sum)       AS nets_distributed,
-       sum(resource_quantity_sum) * 1.8 AS population_covered_estimate
-FROM dm_smc_administered_base
+       sum(quantity_sum)       AS nets_distributed,
+       sum(quantity_sum) * 1.8 AS population_covered_estimate
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND level_two_code  = {province:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY district
 ORDER BY district;
@@ -1264,11 +1245,10 @@ SELECT district,
 FROM
 (
     SELECT level_three_code AS district,
-           sum(resource_quantity_sum) * 1.8 AS population_covered_estimate
-    FROM dm_smc_administered_base
+           sum(quantity_sum) * 1.8 AS population_covered_estimate
+    FROM dm_itn_household_deliveries
     WHERE campaign_number = {campaign_number:String}
       AND level_two_code  = {province:String}
-      AND delivered_to    = 'HOUSEHOLD'
       AND is_delivered
     GROUP BY district
 ) AS given
@@ -1375,11 +1355,10 @@ FULL OUTER JOIN
 FULL OUTER JOIN
 (
     SELECT level_three_code AS district,
-           sum(resource_quantity_sum) AS nets_distributed
-    FROM dm_smc_administered_base
+           sum(quantity_sum) AS nets_distributed
+    FROM dm_itn_household_deliveries
     WHERE campaign_number = {campaign_number:String}
       AND level_two_code  = {province:String}
-      AND delivered_to    = 'HOUSEHOLD'
       AND is_delivered
     GROUP BY district
 ) AS given USING (district)
@@ -1499,9 +1478,9 @@ ORDER BY last_synced_hour DESC;
 -- KPI 40  Total records synced
 -- task + stock + complaint records, from three marts.
 SELECT
-    (SELECT sum(task_rows)         FROM dm_smc_administered_base WHERE campaign_number = {campaign_number:String}) AS task_records,
-    (SELECT sum(transaction_count) FROM dm_stock_transactions    WHERE campaign_number = {campaign_number:String}) AS stock_records,
-    (SELECT sum(complaint_count)   FROM dm_complaints_base       WHERE campaign_number = {campaign_number:String}) AS complaint_records;
+    (SELECT sum(task_rows)         FROM dm_itn_household_deliveries WHERE campaign_number = {campaign_number:String}) AS task_records,
+    (SELECT sum(transaction_count) FROM dm_stock_transactions       WHERE campaign_number = {campaign_number:String}) AS stock_records,
+    (SELECT sum(complaint_count)   FROM dm_complaints_base          WHERE campaign_number = {campaign_number:String}) AS complaint_records;
 
 -- ----------------------------------------------------------------------------
 -- COMPLAINTS
@@ -1744,12 +1723,11 @@ ORDER BY district;
 
 -- STEP 2b: nets handed to households per district.
 SELECT level_three_code           AS district,
-       sum(resource_quantity_sum) AS nets_distributed
-FROM dm_smc_administered_base
+       sum(quantity_sum) AS nets_distributed
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
   AND product_name    = {product_name:String}
   AND level_two_code  = {state:String}
-  AND delivered_to    = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY district
 ORDER BY district;
@@ -1787,9 +1765,8 @@ FROM dm_stock_transactions
 WHERE campaign_number = {campaign_number:String}
 GROUP BY product_name
 UNION ALL
-SELECT 'tasks', product_name, sum(resource_quantity_sum)
-FROM dm_smc_administered_base
+SELECT 'tasks', product_name, sum(quantity_sum)
+FROM dm_itn_household_deliveries
 WHERE campaign_number = {campaign_number:String}
-  AND delivered_to = 'HOUSEHOLD'
   AND is_delivered
 GROUP BY product_name;

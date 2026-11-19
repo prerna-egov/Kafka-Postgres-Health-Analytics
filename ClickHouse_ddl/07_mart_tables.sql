@@ -4,7 +4,7 @@
 -- Storage for the gold layer. These are the target tables only -- the query
 -- logic that populates them lives in 08_coverage_marts.sql (coverage, tables
 -- 1-7), 09_complaints_marts.sql (complaints, tables 8-10) and
--- 10_overview_marts.sql (overview, tables 11-14), 11_inventory_marts.sql
+-- 10_overview_marts.sql (overview, tables 11-14, 23-28 and 31), 11_inventory_marts.sql
 -- (inventory, tables 15-18) and 12_dashboard_marts.sql (the remaining tabs,
 -- tables 19-22 and 29-30), as refreshable materialized views that write here
 -- via TO <table>.
@@ -430,9 +430,6 @@ SETTINGS index_granularity = 8192;
 -- ranges, and a stored count would double-count anyone appearing in two cells.
 -- uniqExactMerge is correct at any level; swap uniqExact for uniq if the volume
 -- ever makes exactness costly.
---
--- member_count_sum with delivered_to = 'HOUSEHOLD' AND is_delivered is the ITN
--- campaign "population covered" (a household counts once per delivery).
 CREATE TABLE IF NOT EXISTS dm_smc_administered_base (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see 10's header
@@ -486,7 +483,6 @@ CREATE TABLE IF NOT EXISTS dm_smc_administered_base (
     administered_count          UInt64,                 -- distinct beneficiaries in THIS row; do not SUM across rows
     task_rows                   UInt64,                 -- raw task-resource row count; additive, and what dm_successful_deliveries_base counts
     resource_quantity_sum       Int64,                  -- sum(quantity): doses/resources, the "total_administered_resources" tile (711)
-    member_count_sum            Int64,                  -- sum(member_count) of the tasks in this cell
 
     INDEX idx_dm_sab_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
@@ -1614,12 +1610,11 @@ SETTINGS index_granularity = 8192;
 
 
 -- ==========================================================================
--- ITN / BEDNET MARTS (29-30)
+-- ITN / BEDNET MARTS (29-31)
 --
--- Only fields no other mart holds; logic in 12_dashboard_marts.sql (views
--- 5-6). Other ITN KPIs read existing marts:
+-- ITN KPIs read no SMC mart. Logic in 12_dashboard_marts.sql (views 5-6) and
+-- 10_overview_marts.sql (view 4). Other ITN KPIs read shared marts:
 --   households registered, registrar, location  dm_household_registry (20)
---   nets distributed, people covered            dm_smc_administered_base (11)
 --   net leakage per store and DP                dm_stock_transactions (15)
 -- ==========================================================================
 
@@ -1690,4 +1685,44 @@ CREATE TABLE IF NOT EXISTS dm_household_task_locations (
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, campaign_number, household_id)
+SETTINGS index_granularity = 8192;
+
+
+-- 31. dm_itn_household_deliveries
+-- Grain: one row per (tenant, campaign, boundary path, event date, status,
+-- is_delivered, product).
+--
+-- ITN campaign household tasks (visits and net deliveries). Net deliveries are
+-- the is_delivered rows; one row per task resource, as in silver.
+CREATE TABLE IF NOT EXISTS dm_itn_household_deliveries (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    event_date                  Date32,                 -- project_task_entity.task_dates (last edit day)
+    administration_status       LowCardinality(String), -- e.g. CLOSED_HOUSEHOLD
+    is_delivered                Bool,
+    product_name                String,
+
+    -- Distinct households (project_beneficiary_client_reference_id). Roll up
+    -- with uniqExactMerge(); do not sum.
+    households_uniq             AggregateFunction(uniqExact, String),
+    task_rows                   UInt64,                 -- household tasks (visits)
+    quantity_sum                Int64,                  -- nets: sum(quantity)
+    member_count_sum            Int64,                  -- people: sum(member_count)
+
+    INDEX idx_dm_ihd_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, event_date, administration_status, product_name)
 SETTINGS index_granularity = 8192;
