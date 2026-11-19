@@ -884,3 +884,912 @@ FROM
     FROM analytics.mart_hf_checklist_outcome GROUP BY cycle_index
 )
 ORDER BY mart, cycle_index;
+
+
+-- ============================================================================
+-- ITN CAMPAIGN DASHBOARD KPI QUERIES
+-- ============================================================================
+-- KPIs 1-49 of the ITN campaign dashboards, numbered as in the KPI doc
+-- (https://claude.ai/artifact/KqTA7LAcrYyhrj36YV8mto). Parameters:
+-- {campaign_number:String}, {province:String} (a level_two_code),
+-- {product_name:String}, {from_date:Date}, {to_date:Date}. Queries cut by
+-- district; the dashboard does the ratios.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- HOUSEHOLD REGISTRATION
+-- ----------------------------------------------------------------------------
+-- dm_household_registry: one row per household; event_date = last edit day;
+-- deleted households are kept.
+
+-- KPI 1  Households registered
+-- dm_household_registry: count of households.
+SELECT level_three_code AS district,
+       uniqExact(household_id) AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY district
+ORDER BY district;
+
+-- KPI 2  Household registration coverage %
+-- households registered / household target.
+SELECT district,
+       registered.households_registered,
+       target.household_target
+FROM
+(
+    SELECT level_three_code AS district,
+           uniqExact(household_id) AS households_registered
+    FROM dm_household_registry
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS registered
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS household_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'HOUSEHOLD'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 3  Population registered (people in registered households)
+-- dm_household_registry: households and the people in them.
+SELECT level_three_code AS district,
+       uniqExact(household_id) AS households_registered,
+       sum(member_count)       AS people_in_registered_households
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY district
+ORDER BY district;
+
+-- KPI 4  Population registration coverage %
+-- people in registered households / population target.
+SELECT district,
+       registered.people_in_registered_households,
+       target.population_target
+FROM
+(
+    SELECT level_three_code AS district,
+           sum(member_count) AS people_in_registered_households
+    FROM dm_household_registry
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS registered
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS population_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'INDIVIDUAL'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 5  Average household size
+-- people / households, both from the KPI 3 query.
+
+-- KPI 6  Households registered per registrar (CDD)
+-- dm_household_registry: households per registering user.
+SELECT user_name,
+       any(name_of_user) AS registrar_name,
+       count()           AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY user_name
+ORDER BY households_registered DESC;
+
+-- KPI 7  Households registered per day vs plan
+-- households per day (the dashboard adds them up) vs target per day.
+-- Actual: households registered each day (the dashboard adds them up)
+SELECT event_date,
+       uniqExact(household_id) AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY event_date
+ORDER BY event_date;
+
+-- Plan: daily target and campaign dates
+SELECT sum(target_per_day) AS households_target_per_day,
+       min(start_date)     AS start_date,
+       max(end_date)       AS end_date
+FROM dm_targets_base
+WHERE campaign_number = {campaign_number:String}
+  AND target_type     = 'HOUSEHOLD'
+  AND node_level      = 2
+  AND level_two_code  = {province:String};
+
+-- ----------------------------------------------------------------------------
+-- TARGETS
+-- ----------------------------------------------------------------------------
+-- dm_targets_base: always filter ONE node_level. HOUSEHOLD / INDIVIDUAL /
+-- PRODUCT = household / population / net target.
+
+-- KPI 8-10 and 12  Household, population and net targets, and campaign dates
+-- dm_targets_base: target per type at one level, plus campaign dates.
+SELECT level_two_code AS province,
+       target_type,
+       sum(target_population) AS overall_target,
+       sum(target_per_day)    AS target_per_day,
+       min(start_date)        AS start_date,
+       max(end_date)          AS end_date
+FROM dm_targets_base
+WHERE campaign_number = {campaign_number:String}
+  AND node_level      = 2
+  AND target_type IN ('HOUSEHOLD', 'INDIVIDUAL', 'PRODUCT')
+GROUP BY province, target_type
+ORDER BY province, target_type;
+
+-- KPI 11  Target for a chosen date range
+-- target per day x days in the range.
+SELECT target_type,
+       sum(target_per_day) AS target_per_day,
+       dateDiff('day', {from_date:Date}, {to_date:Date}) + 1 AS days_in_range
+FROM dm_targets_base
+WHERE campaign_number = {campaign_number:String}
+  AND node_level      = 2
+  AND level_two_code  = {province:String}
+  AND target_type IN ('HOUSEHOLD', 'INDIVIDUAL', 'PRODUCT')
+GROUP BY target_type;
+
+-- ----------------------------------------------------------------------------
+-- NET DISTRIBUTION
+-- ----------------------------------------------------------------------------
+-- dm_smc_administered_base holds every campaign's tasks; net deliveries are
+-- delivered_to = 'HOUSEHOLD' AND is_delivered.
+
+-- KPI 13  Nets distributed
+-- dm_smc_administered_base: nets on delivered household tasks.
+SELECT level_three_code AS district,
+       sum(resource_quantity_sum) AS nets_distributed
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY district
+ORDER BY district;
+
+-- KPI 14  Net distribution coverage %
+-- nets distributed / net target.
+SELECT district,
+       given.nets_distributed,
+       target.nets_target
+FROM
+(
+    SELECT level_three_code AS district,
+           sum(resource_quantity_sum) AS nets_distributed
+    FROM dm_smc_administered_base
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND delivered_to    = 'HOUSEHOLD'
+      AND is_delivered
+    GROUP BY district
+) AS given
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS nets_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'PRODUCT'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 15  Households that received nets
+-- delivery records and distinct households; charts use either.
+SELECT level_three_code AS district,
+       sum(task_rows)                    AS delivery_records,
+       uniqExactMerge(administered_uniq) AS households_received_nets
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY district
+ORDER BY district;
+
+-- KPI 16  Household distribution coverage %
+-- households that received nets / household target.
+SELECT district,
+       reached.households_received_nets,
+       target.household_target
+FROM
+(
+    SELECT level_three_code AS district,
+           uniqExactMerge(administered_uniq) AS households_received_nets
+    FROM dm_smc_administered_base
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND delivered_to    = 'HOUSEHOLD'
+      AND is_delivered
+    GROUP BY district
+) AS reached
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS household_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'HOUSEHOLD'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 17  Closed households (no delivery)
+-- household tasks with status CLOSED_HOUSEHOLD.
+SELECT level_three_code AS district,
+       sum(task_rows) AS closed_households
+FROM dm_smc_administered_base
+WHERE campaign_number       = {campaign_number:String}
+  AND level_two_code        = {province:String}
+  AND delivered_to          = 'HOUSEHOLD'
+  AND administration_status = 'CLOSED_HOUSEHOLD'
+GROUP BY district
+ORDER BY district;
+
+-- KPI 18  Daily progress vs daily target
+-- per day: visits, nets, people covered, closed households vs daily targets.
+-- Actual, per day (households_visited counts every household task).
+SELECT event_date,
+       sum(task_rows)                                               AS households_visited,
+       sumIf(resource_quantity_sum, is_delivered)                   AS nets_distributed,
+       sumIf(member_count_sum, is_delivered)                        AS population_covered,
+       sumIf(task_rows, administration_status = 'CLOSED_HOUSEHOLD') AS closed_households
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+GROUP BY event_date
+ORDER BY event_date;
+
+-- Daily targets
+SELECT target_type,
+       sum(target_per_day) AS target_per_day
+FROM dm_targets_base
+WHERE campaign_number = {campaign_number:String}
+  AND node_level      = 2
+  AND level_two_code  = {province:String}
+  AND target_type IN ('HOUSEHOLD', 'INDIVIDUAL', 'PRODUCT')
+GROUP BY target_type;
+
+-- KPI 19  Nets distributed per day vs plan
+-- nets and household deliveries per day vs target per day.
+SELECT event_date,
+       sum(resource_quantity_sum) AS nets_distributed,
+       sum(task_rows)             AS household_deliveries
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY event_date
+ORDER BY event_date;
+
+-- KPI 20  People given nets one by one, per day vs plan
+-- dm_smc_administered_by_beneficiary: people with an individual delivery per day.
+SELECT event_date,
+       uniqExactMerge(administered_uniq) AS people_given_nets
+FROM dm_smc_administered_by_beneficiary
+WHERE campaign_number       = {campaign_number:String}
+  AND level_two_code        = {province:String}
+  AND delivered_to          = 'INDIVIDUAL'
+  AND is_delivered
+  AND administration_status = 'ADMINISTRATION_SUCCESS'
+GROUP BY event_date
+ORDER BY event_date;
+
+-- ----------------------------------------------------------------------------
+-- POPULATION COVERED
+-- ----------------------------------------------------------------------------
+-- member_count_sum counts a household once per delivered task.
+
+-- KPI 21  Population covered (people in households that received nets)
+-- dm_smc_administered_base.member_count_sum on delivered household tasks.
+SELECT level_three_code      AS district,
+       sum(member_count_sum) AS population_covered
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY district
+ORDER BY district;
+
+-- KPI 22  Population coverage %
+-- population covered / population target.
+SELECT district,
+       covered.population_covered,
+       target.population_target
+FROM
+(
+    SELECT level_three_code      AS district,
+           sum(member_count_sum) AS population_covered
+    FROM dm_smc_administered_base
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND delivered_to    = 'HOUSEHOLD'
+      AND is_delivered
+    GROUP BY district
+) AS covered
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS population_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'INDIVIDUAL'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 23  Population covered, estimated as nets x 1.8
+-- nets distributed x 1.8.
+SELECT level_three_code AS district,
+       sum(resource_quantity_sum)       AS nets_distributed,
+       sum(resource_quantity_sum) * 1.8 AS population_covered_estimate
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY district
+ORDER BY district;
+
+-- KPI 24  Uncovered population
+-- population target - nets distributed x 1.8.
+SELECT district,
+       target.population_target,
+       given.population_covered_estimate
+FROM
+(
+    SELECT level_three_code AS district,
+           sum(resource_quantity_sum) * 1.8 AS population_covered_estimate
+    FROM dm_smc_administered_base
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND delivered_to    = 'HOUSEHOLD'
+      AND is_delivered
+    GROUP BY district
+) AS given
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS population_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'INDIVIDUAL'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- ----------------------------------------------------------------------------
+-- STOCK
+-- ----------------------------------------------------------------------------
+-- Stock marts hold all-time totals at the warehouse's boundary; always filter
+-- product_name.
+
+-- KPI 25-26  Stock received, dispatched and in hand
+-- dm_stock_balance: received, dispatched, in hand = received - dispatched.
+SELECT level_three_code AS district,
+       sum(received_qty)   AS stock_received,
+       sum(dispatched_qty) AS stock_dispatched,
+       sum(net_on_hand)    AS stock_in_hand
+FROM dm_stock_balance
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND product_name    = {product_name:String}
+GROUP BY district
+ORDER BY district;
+
+-- KPI 27  Stock by warehouse
+-- dm_stock_transactions: received, dispatched and in hand per warehouse.
+SELECT facility_name,
+       sumIf(quantity_sum, upper(event_type) = 'RECEIVED')   AS stock_received,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED') AS stock_dispatched,
+       stock_received - stock_dispatched                     AS stock_in_hand
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND product_name    = {product_name:String}
+GROUP BY facility_name
+ORDER BY facility_name;
+
+-- KPI 28  Days stock can last
+-- stock in hand / net target per day.
+SELECT district,
+       stock.stock_in_hand,
+       target.nets_target_per_day
+FROM
+(
+    SELECT level_three_code AS district,
+           sum(net_on_hand) AS stock_in_hand
+    FROM dm_stock_balance
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND product_name    = {product_name:String}
+    GROUP BY district
+) AS stock
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_per_day) AS nets_target_per_day
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'PRODUCT'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+ORDER BY district;
+
+-- KPI 29  Required stock and stock status
+-- required = net target - nets distributed; status = in hand - required.
+SELECT district,
+       stock.stock_in_hand,
+       target.nets_target,
+       given.nets_distributed
+FROM
+(
+    SELECT level_three_code AS district,
+           sum(net_on_hand) AS stock_in_hand
+    FROM dm_stock_balance
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND product_name    = {product_name:String}
+    GROUP BY district
+) AS stock
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(target_population) AS nets_target
+    FROM dm_targets_base
+    WHERE campaign_number = {campaign_number:String}
+      AND target_type     = 'PRODUCT'
+      AND node_level      = 3
+      AND level_two_code  = {province:String}
+    GROUP BY district
+) AS target USING (district)
+FULL OUTER JOIN
+(
+    SELECT level_three_code AS district,
+           sum(resource_quantity_sum) AS nets_distributed
+    FROM dm_smc_administered_base
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+      AND delivered_to    = 'HOUSEHOLD'
+      AND is_delivered
+    GROUP BY district
+) AS given USING (district)
+ORDER BY district;
+
+-- KPI 30  Number of warehouses
+-- distinct facilities except 'Monitor Local' (add facility_type != 'STAFF' to drop staff).
+SELECT level_three_code AS district,
+       uniqExact(facility_id) AS warehouses
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND facility_type  != 'Monitor Local'
+GROUP BY district
+ORDER BY district;
+
+-- KPI 31  Excess stock and loss stock
+-- on hold: no mart yet; EXCESS / LESS entry types not seen on unified-dev.
+SELECT district,
+       sumIf(physical_count, stock_entry_type = 'EXCESS') AS excess_stock,
+       sumIf(physical_count, stock_entry_type = 'LESS')   AS loss_stock
+FROM
+(
+    SELECT level_three_code AS district,
+           physical_count,
+           JSONExtractString(
+               arrayFirst(field -> JSONExtractString(field, 'key') = 'stockEntryType',
+                          JSONExtractArrayRaw(additional_fields, 'fields')),
+               'value') AS stock_entry_type
+    FROM stock_entity FINAL
+    WHERE campaign_number = {campaign_number:String}
+      AND level_two_code  = {province:String}
+)
+GROUP BY district
+ORDER BY district;
+
+-- KPI 32  Excess % and loss %
+-- KPI 31 / KPI 13; no query of its own.
+
+-- KPI 33  State stock summary (received, issued, returned, balance)
+-- receipts by store tier; balance = received - issued + returned.
+SELECT level_two_code AS province,
+       sumIf(quantity_sum, facility_type = 'Warehouse'    AND upper(event_type) = 'RECEIVED' AND reason != 'RETURNED') AS stock_received,
+       sumIf(quantity_sum, facility_type = 'LGA Facility' AND upper(event_type) = 'RECEIVED' AND reason != 'RETURNED') AS stock_issued,
+       sumIf(quantity_sum, facility_type = 'Warehouse'    AND upper(event_type) = 'RECEIVED' AND reason = 'RETURNED')  AS stock_returned
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+GROUP BY province
+ORDER BY province;
+
+-- KPI 34  Warehouse map
+-- dm_stock_facility_points: warehouse location and record count.
+SELECT facility_name,
+       facility_type,
+       latitude,
+       longitude,
+       transaction_count
+FROM dm_stock_facility_points
+WHERE campaign_number = {campaign_number:String};
+
+-- ----------------------------------------------------------------------------
+-- USER SYNC
+-- ----------------------------------------------------------------------------
+-- dm_user_sync: CREATED = staff list, SYNCED = users who sent a record.
+
+-- KPI 35-36  Users created and users synced, by role
+-- dm_user_sync: distinct users per role, created and synced.
+SELECT role,
+       uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced
+FROM dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+GROUP BY role
+ORDER BY role;
+
+-- KPI 37  User sync %
+-- users synced / users created.
+SELECT level_three_code AS district,
+       uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced
+FROM dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY district
+ORDER BY district;
+
+-- KPI 38  User sync summary with all six roles
+-- dm_user_sync for the six roles, including LOCAL_MONITOR.
+SELECT level_two_code AS province,
+       uniqExactIf(user_name, src = 'CREATED') AS users_created,
+       uniqExactIf(user_name, src = 'SYNCED')  AS users_synced
+FROM dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND role IN ('DISTRIBUTOR', 'WAREHOUSE_MANAGER', 'LOCAL_MONITOR',
+               'NATIONAL_SUPERVISOR', 'PROVINCIAL_SUPERVISOR', 'DISTRICT_SUPERVISOR')
+GROUP BY province
+ORDER BY province;
+
+-- KPI 39  Active users in the last 3 hours, and last sync per user
+-- dm_cdd_sync_hourly: active users, and latest sync per user.
+-- Users active in the last 3 hours
+SELECT uniqExact(user_name) AS users_active_last_3_hours
+FROM dm_cdd_sync_hourly
+WHERE campaign_number = {campaign_number:String}
+  AND synced_hour >= toStartOfHour(now() - INTERVAL 3 HOUR);
+
+-- Latest sync per user
+SELECT user_name,
+       role,
+       max(synced_hour) AS last_synced_hour,
+       sum(records)     AS records_synced
+FROM dm_cdd_sync_hourly
+WHERE campaign_number = {campaign_number:String}
+GROUP BY user_name, role
+ORDER BY last_synced_hour DESC;
+
+-- KPI 40  Total records synced
+-- task + stock + complaint records, from three marts.
+SELECT
+    (SELECT sum(task_rows)         FROM dm_smc_administered_base WHERE campaign_number = {campaign_number:String}) AS task_records,
+    (SELECT sum(transaction_count) FROM dm_stock_transactions    WHERE campaign_number = {campaign_number:String}) AS stock_records,
+    (SELECT sum(complaint_count)   FROM dm_complaints_base       WHERE campaign_number = {campaign_number:String}) AS complaint_records;
+
+-- ----------------------------------------------------------------------------
+-- COMPLAINTS
+-- ----------------------------------------------------------------------------
+-- application_status: PENDING_ASSIGNMENT (open), RESOLVED, REJECTED;
+-- service_code = complaint type.
+
+-- KPI 41  Complaints by status
+-- dm_complaints_base: open, resolved, rejected.
+SELECT level_three_code AS district,
+       sumIf(complaint_count, application_status = 'PENDING_ASSIGNMENT') AS open,
+       sumIf(complaint_count, application_status = 'RESOLVED')           AS resolved,
+       sumIf(complaint_count, application_status = 'REJECTED')           AS rejected
+FROM dm_complaints_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY district
+ORDER BY district;
+
+-- KPI 42  Complaints by type
+-- complaints per service_code.
+SELECT service_code AS complaint_type,
+       sum(complaint_count) AS complaints
+FROM dm_complaints_base
+WHERE campaign_number     = {campaign_number:String}
+  AND application_status != ''
+GROUP BY complaint_type
+ORDER BY complaints DESC;
+
+-- KPI 43  Complaints by area and share of total
+-- complaints per area and their share of all.
+SELECT level_three_code AS district,
+       sum(complaint_count)              AS complaints,
+       sum(sum(complaint_count)) OVER () AS total_complaints
+FROM dm_complaints_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND application_status IN ('PENDING_ASSIGNMENT', 'RESOLVED', 'REJECTED')
+GROUP BY district
+ORDER BY complaints DESC;
+
+-- KPI 44  Complaints per day
+-- complaints per status per day.
+SELECT event_date,
+       sumIf(complaint_count, application_status = 'PENDING_ASSIGNMENT') AS open,
+       sumIf(complaint_count, application_status = 'RESOLVED')           AS resolved,
+       sumIf(complaint_count, application_status = 'REJECTED')           AS rejected
+FROM dm_complaints_base
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY event_date
+ORDER BY event_date;
+
+-- KPI 45  Average time to close a complaint
+-- dm_complaints_resolution: hours to close / closed complaints.
+SELECT level_two_code AS province,
+       sum(resolved_count)                     AS complaints_closed,
+       sum(resolved_duration_ms_sum) / 3600000 AS total_hours_to_close
+FROM dm_complaints_resolution
+WHERE campaign_number = {campaign_number:String}
+GROUP BY province
+ORDER BY province;
+
+-- KPI 46  Open complaints by age
+-- dm_complaints_open_ageing: open complaints per age bucket (aged from filing).
+SELECT level_three_code AS district,
+       age_bucket,
+       sum(open_count) AS open_complaints
+FROM dm_complaints_open_ageing
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY district, age_bucket, age_bucket_order
+ORDER BY district, age_bucket_order;
+
+-- ----------------------------------------------------------------------------
+-- MAPS
+-- ----------------------------------------------------------------------------
+-- Cells are geohash precision 5 (about 5 km); points at (0, 0) are skipped.
+
+-- KPI 47  Households registered map
+-- dm_household_registry: households per cell at the household's location.
+SELECT geohashEncode(longitude, latitude, 5) AS map_cell,
+       avg(latitude)                         AS centre_latitude,
+       avg(longitude)                        AS centre_longitude,
+       count()                               AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND NOT (latitude = 0 AND longitude = 0)
+GROUP BY map_cell;
+
+-- KPI 48  Households that received nets map
+-- dm_household_task_locations: households per cell at their task location.
+-- Households that received nets map (5 km cells)
+SELECT geohashEncode(task_longitude, task_latitude, 5) AS map_cell,
+       avg(task_latitude)                              AS centre_latitude,
+       avg(task_longitude)                             AS centre_longitude,
+       count()                                         AS households_received_nets
+FROM dm_household_task_locations
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+  AND received_nets   = 1
+GROUP BY map_cell;
+
+-- Household point map: every household with a task, with member totals
+SELECT geohashEncode(task_longitude, task_latitude, {precision:UInt8}) AS map_cell,
+       avg(task_latitude)                                              AS centre_latitude,
+       avg(task_longitude)                                             AS centre_longitude,
+       count()                                                         AS households_visited,
+       sum(member_count)                                               AS people_visited
+FROM dm_household_task_locations
+WHERE campaign_number = {campaign_number:String}
+GROUP BY map_cell;
+
+-- KPI 49  Households visited, map points by locality
+-- dm_household_task_locations: average location and households per locality.
+SELECT level_five_code      AS community,
+       avg(task_latitude)   AS centre_latitude,
+       avg(task_longitude)  AS centre_longitude,
+       count()              AS households_visited
+FROM dm_household_task_locations
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {province:String}
+GROUP BY community;
+
+
+-- ============================================================================
+-- ITN KPI QUERIES -- "ITN CAMPAIGN EXTENSION - net-distribution-specific KPIs"
+-- ============================================================================
+-- ITN 1-6 of the ITN extension sheet. Population covered and the maps are
+-- dashboard KPIs 21-22 and 47-49 above. {state:String} is a level_two_code;
+-- the dashboard does the ratios.
+-- ============================================================================
+
+
+-- ITN 1  Household enumeration coverage = households registered / household target
+SELECT level_three_code         AS district,
+       count()                  AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {state:String}
+GROUP BY district
+ORDER BY district;
+
+SELECT level_three_code       AS district,
+       sum(target_population) AS target_households
+FROM dm_targets_base
+WHERE campaign_number = {campaign_number:String}
+  AND target_type     = 'HOUSEHOLD'
+  AND node_level      = 3
+  AND level_two_code  = {state:String}
+GROUP BY district
+ORDER BY district;
+
+-- ITN 1 per enumerator.
+SELECT user_name,
+       any(name_of_user) AS registrar_name,
+       count()           AS households_registered
+FROM dm_household_registry
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {state:String}
+GROUP BY user_name
+ORDER BY households_registered DESC;
+
+-- ITN 2-4  Voucher funnel. Counts household registrations (a household
+-- registered twice counts twice).
+--   ITN 2  voucher_issued / registered
+--   ITN 3  voucher_redeemed / voucher_issued
+--   ITN 4  received_nets / registered
+SELECT level_three_code                                                  AS district,
+       sum(registrations)                                                AS households_registered,
+       sumIf(registrations, has_voucher = 1)                             AS households_voucher_issued,
+       sumIf(registrations, has_voucher = 1 AND received_nets = 1)       AS households_voucher_redeemed,
+       sumIf(registrations, received_nets = 1)                           AS households_received_nets
+FROM dm_itn_vouchers
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {state:String}
+GROUP BY district
+ORDER BY district;
+
+-- ITN 3 trend, by registration day (there is no redemption date).
+SELECT event_date                                                  AS day,
+       sumIf(registrations, has_voucher = 1)                       AS households_voucher_issued,
+       sumIf(registrations, has_voucher = 1 AND received_nets = 1) AS households_voucher_redeemed
+FROM dm_itn_vouchers
+WHERE campaign_number = {campaign_number:String}
+GROUP BY day
+ORDER BY day;
+
+-- ITN 2 per enumerator.
+SELECT user_name,
+       any(name_of_user)                      AS registrar_name,
+       sum(registrations)                     AS households_registered,
+       sumIf(registrations, has_voucher = 1)  AS households_voucher_issued
+FROM dm_itn_vouchers
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {state:String}
+GROUP BY user_name
+ORDER BY households_registered DESC;
+
+
+-- FLAGGED  ITN 5  Distribution point functionality: no source has planned
+-- points or their status. Stand-in: distributor users rostered vs active.
+SELECT level_three_code                         AS district,
+       uniqExactIf(user_name, src = 'CREATED')  AS distributors_rostered,
+       uniqExactIf(user_name, src = 'SYNCED')   AS distributors_active
+FROM dm_user_sync
+WHERE campaign_number = {campaign_number:String}
+  AND level_two_code  = {state:String}
+  AND role            = 'DISTRIBUTOR'
+GROUP BY district
+ORDER BY district;
+
+
+-- ITN 6  Net leakage = (dispatched - distributed - returned) / dispatched.
+-- Lost / damaged nets are shown apart.
+-- STEP 1: dispatches per store type; pick the last-mile type (each hop is a dispatch).
+SELECT facility_type,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED' AND reason = '')              AS nets_dispatched,
+       sumIf(quantity_sum, upper(event_type) = 'RECEIVED' AND upper(reason) = 'RETURNED') AS nets_returned
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+  AND product_name    = {product_name:String}
+GROUP BY facility_type
+ORDER BY facility_type;
+
+-- STEP 2a: stock side per district, last-mile stores only.
+SELECT level_three_code AS district,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED' AND reason = '')              AS nets_dispatched,
+       sumIf(quantity_sum, upper(event_type) = 'RECEIVED' AND upper(reason) = 'RETURNED') AS nets_returned,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED'
+                           AND (upper(reason) LIKE 'LOST%' OR upper(reason) LIKE 'DAMAGED%')) AS nets_lost_or_damaged
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+  AND product_name    = {product_name:String}
+  AND facility_type   = {last_mile_facility_type:String}
+  AND level_two_code  = {state:String}
+GROUP BY district
+ORDER BY district;
+
+-- STEP 2b: nets handed to households per district.
+SELECT level_three_code           AS district,
+       sum(resource_quantity_sum) AS nets_distributed
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND product_name    = {product_name:String}
+  AND level_two_code  = {state:String}
+  AND delivered_to    = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY district
+ORDER BY district;
+
+-- ITN 6 per store and distribution point (nets distributed can't be split by DP).
+SELECT facility_name               AS store,
+       transacting_facility_name   AS distribution_point,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED' AND reason = '')              AS nets_dispatched,
+       sumIf(quantity_sum, upper(event_type) = 'RECEIVED' AND upper(reason) = 'RETURNED') AS nets_returned,
+       sumIf(quantity_sum, upper(event_type) = 'DISPATCHED'
+                           AND (upper(reason) LIKE 'LOST%' OR upper(reason) LIKE 'DAMAGED%')) AS nets_lost_or_damaged
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+  AND product_name    = {product_name:String}
+  AND facility_type   = {last_mile_facility_type:String}
+GROUP BY store, distribution_point
+HAVING nets_dispatched + nets_returned + nets_lost_or_damaged > 0   -- drops the store's supplier
+ORDER BY store, distribution_point;
+
+
+-- ITN DIAGNOSTICS -- run these when an ITN KPI reads zero
+
+-- Campaigns with vouchers (0 issued = the tag is not captured).
+SELECT campaign_number,
+       sum(registrations)                      AS households_registered,
+       sumIf(registrations, has_voucher = 1)   AS households_voucher_issued,
+       sumIf(registrations, received_nets = 1) AS households_received_nets
+FROM dm_itn_vouchers
+GROUP BY campaign_number
+ORDER BY households_registered DESC;
+
+-- Product names on each side of ITN 6 (must match, counted in nets).
+SELECT 'stock' AS side, product_name, sum(quantity_sum) AS quantity
+FROM dm_stock_transactions
+WHERE campaign_number = {campaign_number:String}
+GROUP BY product_name
+UNION ALL
+SELECT 'tasks', product_name, sum(resource_quantity_sum)
+FROM dm_smc_administered_base
+WHERE campaign_number = {campaign_number:String}
+  AND delivered_to = 'HOUSEHOLD'
+  AND is_delivered
+GROUP BY product_name;

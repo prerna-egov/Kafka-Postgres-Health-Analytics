@@ -24,6 +24,7 @@
 --     Data.administrationStatus              -> project_task_entity.administration_status
 --     Data.projectBeneficiaryClientReferenceId
 --                                            -> project_task_entity.project_beneficiary_client_reference_id
+--     Data.memberCount                       -> project_task_entity.member_count (member_count_sum)
 --     Data.additionalDetails.cycleIndex      -> project_task_campaign_field key cycleIndex
 --     Data.eventType / Data.physicalCount    -> stock_entity.event_type / physical_count
 --     Data.targetType / Data.overallTarget / Data.targetPerDay
@@ -182,6 +183,8 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- cycleIndex, age and gender are project_task_campaign_field rows (silver is
 -- campaign-agnostic): they are pivoted per task version and joined back on the
 -- version, so the query below reads them under their old column names.
+--
+-- member_count_sum serves the ITN campaign "population covered".
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_smc_administered_base
 REFRESH EVERY 80 YEAR
 TO dm_smc_administered_base
@@ -249,7 +252,8 @@ SELECT
         toString(administration_status)
     ))                                 AS administered_count,
     toUInt64(count())                  AS task_rows,
-    sum(quantity)                      AS resource_quantity_sum
+    sum(quantity)                      AS resource_quantity_sum,
+    toInt64(sum(member_count))         AS member_count_sum
 FROM tasks_with_campaign_fields
 GROUP BY
     tenant_id,
