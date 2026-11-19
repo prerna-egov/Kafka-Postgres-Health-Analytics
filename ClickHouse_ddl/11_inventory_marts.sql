@@ -24,6 +24,8 @@
 --     Data.physicalCount        -> stock_entity.physical_count   (there is no `quantity` column on stock)
 --     Data.facilityId / Name / Type
 --                               -> stock_entity.facility_id / facility_name / facility_type
+--     Data.transactingFacilityId / Name / Type
+--                               -> stock_entity.transacting_facility_id / _name / _type
 --     Data.additionalDetails.lat / .lng
 --                               -> stock_campaign_field keys lat / lng (value_number)
 --     Data.stockReconciliation.physicalCount
@@ -148,6 +150,8 @@ SET allow_experimental_refreshable_materialized_view = 1;
 -- verbatim so the mart stays a faithful image of the source vocabulary, and
 -- consumers match on it directly. (dm_stock_balance does normalize case,
 -- because it collapses the column away and has to decide.)
+--
+-- transacting_facility_* (the other party) gives totals per distribution point.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_stock_transactions
 REFRESH EVERY 80 YEAR
 TO dm_stock_transactions
@@ -169,6 +173,9 @@ SELECT
     facility_id,
     facility_name,
     facility_type,
+    transacting_facility_id,
+    transacting_facility_name,
+    transacting_facility_type,
     event_type,
     reason,
     sum(toInt64(physical_count)) AS quantity_sum,
@@ -191,6 +198,9 @@ GROUP BY
     facility_id,
     facility_name,
     facility_type,
+    transacting_facility_id,
+    transacting_facility_name,
+    transacting_facility_type,
     event_type,
     reason;
 

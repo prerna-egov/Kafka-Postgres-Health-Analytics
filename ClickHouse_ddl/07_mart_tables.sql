@@ -4,17 +4,17 @@
 -- Storage for the gold layer. These are the target tables only -- the query
 -- logic that populates them lives in 08_coverage_marts.sql (coverage, tables
 -- 1-7), 09_complaints_marts.sql (complaints, tables 8-10) and
--- 10_overview_marts.sql (overview, tables 11-14), 11_inventory_marts.sql
+-- 10_overview_marts.sql (overview, tables 11-14, 23-28 and 31), 11_inventory_marts.sql
 -- (inventory, tables 15-18) and 12_dashboard_marts.sql (the remaining tabs,
--- tables 19-22), as refreshable materialized views that write here via
--- TO <table>.
+-- tables 19-22 and 29-30), as refreshable materialized views that write here
+-- via TO <table>.
 --
 -- Engine choice: plain MergeTree, not ReplacingMergeTree. Each refresh
 -- rebuilds the table wholesale (a refreshable MV with a TO target and no
 -- APPEND clause replaces the target's contents atomically), so there are
 -- never multiple versions of a row to collapse.
 --
--- Create these BEFORE 08-12 -- the materialized views there reference them.
+-- Create these BEFORE 08-16 -- the materialized views there reference them.
 -- ==========================================================================
 
 
@@ -1080,7 +1080,7 @@ SETTINGS index_granularity = 8192;
 
 -- 15. dm_stock_transactions
 -- Grain: one row per (tenant, campaign, boundary path, product, facility,
--- event type, reason).
+-- transacting facility, event type, reason).
 --
 -- WHY reason IS IN THE GRAIN. The transaction breakdown splits stock movement
 -- into series that are each an (event_type, reason) PAIR -- received, issued,
@@ -1095,6 +1095,9 @@ SETTINGS index_granularity = 8192;
 -- materialized, because picking one in storage would bury a metric decision:
 --     dashboard:     received - dispatched
 --     KPI framework: received + returned(unused) - issued
+--
+-- transacting_facility_* is the other party of each movement, for totals per
+-- distribution point (ITN net leakage per DP).
 CREATE TABLE IF NOT EXISTS dm_stock_transactions (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String), -- may be ''; see 11's header
@@ -1116,6 +1119,9 @@ CREATE TABLE IF NOT EXISTS dm_stock_transactions (
     facility_id                 LowCardinality(String), -- the derived facility (receiver on RECEIVED, sender on DISPATCHED)
     facility_name               LowCardinality(String), -- viz 722's facility tables and 723's drill key on NAME, not id
     facility_type               LowCardinality(String), -- WarNum excludes 'Monitor Local' at read time
+    transacting_facility_id     LowCardinality(String), -- the other party: sender on RECEIVED, receiver on DISPATCHED
+    transacting_facility_name   LowCardinality(String), -- e.g. the distribution point a store dispatched to
+    transacting_facility_type   LowCardinality(String),
     event_type                  LowCardinality(String), -- stock.transaction_type: RECEIVED / DISPATCHED
     reason                      LowCardinality(String), -- stock.transaction_reason; '' is a real, common value
 
@@ -1379,6 +1385,10 @@ SETTINGS index_granularity = 8192;
 -- member_count is carried raw rather than pre-filtered, so the
 -- oversized-household threshold stays a read-time predicate and the same rows
 -- serve as the registered-household denominator.
+--
+-- user_name / name_of_user and latitude / longitude serve the ITN campaign
+-- registrar table and registered map. household_id is household_entity.id
+-- (not client_reference_id). Deleted households are kept.
 CREATE TABLE IF NOT EXISTS dm_household_registry (
     tenant_id                   LowCardinality(String),
     campaign_number             LowCardinality(String),
@@ -1396,7 +1406,11 @@ CREATE TABLE IF NOT EXISTS dm_household_registry (
 
     household_id                String,
     member_count                Int32,                  -- household_entity.member_count; viz 789 filters > 20
-    event_date                  Date32,
+    event_date                  Date32,                 -- max(task_dates): last edit day
+    user_name                   LowCardinality(String), -- who registered the household
+    name_of_user                LowCardinality(String),
+    latitude                    Float64,                -- household location; (0, 0) = none
+    longitude                   Float64,
 
     INDEX idx_dm_hhr_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
 )
@@ -1592,4 +1606,123 @@ CREATE TABLE IF NOT EXISTS dm_hf_checklist_outcome (
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, campaign_number, checklist_name, role, event_date)
+SETTINGS index_granularity = 8192;
+
+
+-- ==========================================================================
+-- ITN / BEDNET MARTS (29-31)
+--
+-- ITN KPIs read no SMC mart. Logic in 12_dashboard_marts.sql (views 5-6) and
+-- 10_overview_marts.sql (view 4). Other ITN KPIs read shared marts:
+--   households registered, registrar, location  dm_household_registry (20)
+--   net leakage per store and DP                dm_stock_transactions (15)
+-- ==========================================================================
+
+
+-- 29. dm_itn_vouchers
+-- Grain: one row per (tenant, campaign, boundary path, registrar, event date,
+-- has_voucher, received_nets).
+--
+-- ITN voucher funnel. Counts household registrations (a household registered
+-- twice counts twice). The voucher is project_beneficiary_entity.tag.
+CREATE TABLE IF NOT EXISTS dm_itn_vouchers (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    user_name                   LowCardinality(String), -- who registered the household in this campaign
+    name_of_user                LowCardinality(String),
+    event_date                  Date32,                 -- last edit day of the registration
+    has_voucher                 UInt8,                  -- 1 = the registration carries a tag
+    received_nets               UInt8,                  -- 1 = the registration has a delivered household task
+
+    registrations               UInt64,                 -- household registrations in this cell
+
+    INDEX idx_dm_iv_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, event_date)
+SETTINGS index_granularity = 8192;
+
+
+-- 30. dm_household_task_locations
+-- Grain: one row per (tenant, campaign, boundary path, household).
+--
+-- Where each household's tasks were recorded, for the ITN campaign maps. Only
+-- household tasks with a location are used.
+CREATE TABLE IF NOT EXISTS dm_household_task_locations (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    household_id                String,                 -- the household's client_reference_id
+    task_latitude               Float64,                -- average location of its tasks
+    task_longitude              Float64,
+    received_nets               UInt8,                  -- 1 = a located task delivered nets
+    member_count                Int32,                  -- for the point map's people total
+
+    INDEX idx_dm_htl_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, household_id)
+SETTINGS index_granularity = 8192;
+
+
+-- 31. dm_itn_household_deliveries
+-- Grain: one row per (tenant, campaign, boundary path, event date, status,
+-- is_delivered, product).
+--
+-- ITN campaign household tasks (visits and net deliveries). Net deliveries are
+-- the is_delivered rows; one row per task resource, as in silver.
+CREATE TABLE IF NOT EXISTS dm_itn_household_deliveries (
+    tenant_id                   LowCardinality(String),
+    campaign_number             LowCardinality(String),
+    hierarchy_type              LowCardinality(String),
+
+    level_one_code                      LowCardinality(String),
+    level_two_code                      LowCardinality(String),
+    level_three_code                    LowCardinality(String),
+    level_four_code                     LowCardinality(String),
+    level_five_code                     LowCardinality(String),
+    level_six_code                      LowCardinality(String),
+    level_seven_code                    LowCardinality(String),
+    level_eight_code                    LowCardinality(String),
+    level_nine_code                     LowCardinality(String),
+
+    event_date                  Date32,                 -- project_task_entity.task_dates (last edit day)
+    administration_status       LowCardinality(String), -- e.g. CLOSED_HOUSEHOLD
+    is_delivered                Bool,
+    product_name                String,
+
+    -- Distinct households (project_beneficiary_client_reference_id). Roll up
+    -- with uniqExactMerge(); do not sum.
+    households_uniq             AggregateFunction(uniqExact, String),
+    task_rows                   UInt64,                 -- household tasks (visits)
+    quantity_sum                Int64,                  -- nets: sum(quantity)
+    member_count_sum            Int64,                  -- people: sum(member_count)
+
+    INDEX idx_dm_ihd_geo (level_two_code, level_three_code, level_four_code, level_five_code, level_six_code) TYPE set(0) GRANULARITY 1
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, campaign_number, event_date, administration_status, product_name)
 SETTINGS index_granularity = 8192;

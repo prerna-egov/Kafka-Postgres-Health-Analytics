@@ -9,11 +9,13 @@
 --   DSS_HEALTH_DATA_QUALITY                 viz 788-794
 --   DSS_HEALTH_REFERRAL_AND_SIDE_EFFECTS    viz 802-803
 --   DSS_HEALTH_SPECIFIC_KPIS                viz 806-809
---   DSS_KIBANA_MAPS                         viz 760-762
+--   DSS_KIBANA_MAPS                         viz 760-762  (not built; see 07 banner)
+-- and the ITN campaign voucher funnel and household maps (views 5-6).
 --
 -- LOGIC only. Targets dm_attendance, dm_household_registry,
--- dm_referral_summary and dm_suspected_fraud are defined in 07_mart_tables.sql
--- as items 19-22 and must be created BEFORE this file runs.
+-- dm_referral_summary and dm_suspected_fraud (items 19-22), and
+-- dm_itn_vouchers and dm_household_task_locations (items 29-30), are defined
+-- in 07_mart_tables.sql and must be created BEFORE this file runs.
 --
 -- Every silver source is ReplacingMergeTree, so every read uses FINAL.
 --
@@ -21,7 +23,7 @@
 -- REGISTRATION_ADMINISTRATION, needs no new table at all -- see the mapping
 -- below. Four marts are added only where a genuinely new source is involved
 -- (attendance logs, the household registry, referrals, and the fraud
--- heuristic).
+-- heuristic), plus two for the ITN campaign (views 5-6).
 --
 -- TARGETS: read dm_targets_base (07 item 2) with a LEVEL SELECTOR --
 -- node_level = <the level the chart buckets at> AND code = <the bucket key> --
@@ -76,9 +78,8 @@
 -- DATA_QUALITY (788-794):
 --   788 userSyncSummaryProvinceICCD        -> dm_user_sync (18)
 --   789 housesWithMoreThanTwentyMembers*   -> countIf(member_count > 20) FROM (20)
---   791 entriesDoneByWMs*                  -> sum(transaction_count) FROM dm_stock_transactions (15)
---                                             -- no new mart: stock already carries role? NO, it does
---                                             -- not; see KNOWN GAPS below.
+--   791 entriesDoneByWMs*                  -> NOT BUILT: needs role, which dm_stock_transactions (15)
+--                                             lacks; see KNOWN GAPS below.
 --   792 incompleteRecords*                 -> registered FROM (20)/household_member
 --                                             - visited FROM (11) over the four terminal statuses
 --   793 suspectedFrauds*                   -> uniqExact(created_by) FROM dm_suspected_fraud (22)
@@ -167,6 +168,9 @@ GROUP BY
 -- a read-time predicate. No filter here: the registry is also the denominator
 -- source for the incomplete-records metric, which needs ALL households, not
 -- just the oversized ones.
+--
+-- user_name / name_of_user and latitude / longitude serve the ITN campaign
+-- registrar table and registered map.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_household_registry
 REFRESH EVERY 80 YEAR
 TO dm_household_registry
@@ -186,7 +190,11 @@ SELECT
     level_nine_code,
     id                AS household_id,
     max(member_count) AS member_count,
-    max(task_dates)   AS event_date
+    max(task_dates)   AS event_date,
+    any(user_name)    AS user_name,
+    any(name_of_user) AS name_of_user,
+    any(geo_point_lat) AS latitude,
+    any(geo_point_lon) AS longitude
 FROM household_entity FINAL
 GROUP BY
     tenant_id, campaign_number, hierarchy_type,
@@ -309,3 +317,110 @@ GROUP BY
     level_nine_code,
     created_by, minute_bucket
 HAVING count() >= 4;
+
+
+-- 5. mv_dm_itn_vouchers -> dm_itn_vouchers
+--
+-- One input row per household registration (a live beneficiary record of a
+-- live household). event_date is the registration's last edit day.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_itn_vouchers
+REFRESH EVERY 80 YEAR
+TO dm_itn_vouchers
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    user_name,
+    name_of_user,
+    task_dates                 AS event_date,
+    toUInt8(tag != '')         AS has_voucher,
+    toUInt8(client_reference_id IN
+    (
+        SELECT project_beneficiary_client_reference_id
+        FROM project_task_entity FINAL
+        WHERE delivered_to = 'HOUSEHOLD'
+          AND is_delivered
+    ))                         AS received_nets,
+    toUInt64(count())          AS registrations
+FROM project_beneficiary_entity FINAL
+WHERE is_deleted = false
+  AND beneficiary_client_reference_id IN
+  (
+      SELECT client_reference_id
+      FROM household_entity FINAL
+      WHERE is_deleted = false
+  )
+GROUP BY
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    user_name,
+    name_of_user,
+    event_date,
+    has_voucher,
+    received_nets;
+
+
+-- 6. mv_dm_household_task_locations -> dm_household_task_locations
+--
+-- One row per household: the average location of its household tasks that
+-- recorded one, and whether any of those tasks delivered nets.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_household_task_locations
+REFRESH EVERY 80 YEAR
+TO dm_household_task_locations
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    household_id,
+    avg(latitude)               AS task_latitude,
+    avg(longitude)              AS task_longitude,
+    toUInt8(max(is_delivered))  AS received_nets,
+    max(member_count)           AS member_count
+FROM project_task_entity FINAL
+WHERE delivered_to = 'HOUSEHOLD'
+  AND household_id != ''
+  AND NOT (latitude = 0 AND longitude = 0)
+GROUP BY
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    household_id;

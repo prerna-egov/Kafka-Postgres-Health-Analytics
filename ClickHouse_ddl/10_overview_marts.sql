@@ -8,8 +8,9 @@
 --
 -- LOGIC only, mirroring the 07/08 split. The target tables
 -- (dm_smc_administered_base, dm_smc_adverse_events, dm_stock_balance, dm_campaign_daily_progress,
--- dm_campaign_gender_breakdown, dm_zero_dose_daily_by_node, dm_missed_children_daily_by_node) are defined in
--- 07_mart_tables.sql as items 11, 13, 14, 25, 26, 27 and 28 and must be created BEFORE this file runs -- the
+-- dm_campaign_gender_breakdown, dm_zero_dose_daily_by_node, dm_missed_children_daily_by_node,
+-- dm_itn_household_deliveries) are defined in
+-- 07_mart_tables.sql as items 11, 13, 14, 25, 26, 27, 28 and 31 and must be created BEFORE this file runs -- the
 -- views below write into them via TO <table>.
 --
 -- Every silver source is ReplacingMergeTree, so every read uses FINAL.
@@ -1221,4 +1222,53 @@ GROUP BY
     level_seven_code,
     level_eight_code,
     level_nine_code,
+    product_name;
+
+
+-- 4. mv_dm_itn_household_deliveries -> dm_itn_household_deliveries
+--
+-- ITN campaign household tasks: visits, nets, households and people covered.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dm_itn_household_deliveries
+REFRESH EVERY 80 YEAR
+TO dm_itn_household_deliveries
+AS
+SELECT
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    task_dates                                              AS event_date,
+    administration_status,
+    is_delivered,
+    product_name,
+    uniqExactState(project_beneficiary_client_reference_id) AS households_uniq,
+    toUInt64(count())                                       AS task_rows,
+    toInt64(sum(quantity))                                  AS quantity_sum,
+    toInt64(sum(member_count))                              AS member_count_sum
+FROM project_task_entity FINAL
+WHERE delivered_to = 'HOUSEHOLD'
+GROUP BY
+    tenant_id,
+    campaign_number,
+    hierarchy_type,
+    level_one_code,
+    level_two_code,
+    level_three_code,
+    level_four_code,
+    level_five_code,
+    level_six_code,
+    level_seven_code,
+    level_eight_code,
+    level_nine_code,
+    event_date,
+    administration_status,
+    is_delivered,
     product_name;

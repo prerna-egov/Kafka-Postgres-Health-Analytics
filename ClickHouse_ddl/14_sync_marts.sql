@@ -42,8 +42,10 @@ FROM
         toString(name_of_user) AS name_of_user
     FROM analytics.project_staff_entity FINAL
     WHERE user_id != ''
+      -- LOCAL_MONITOR: one of the six roles in the ITN campaign user sync summary.
       AND role IN ('DISTRIBUTOR','WAREHOUSE_MANAGER','NATIONAL_SUPERVISOR',
-                   'PROVINCIAL_SUPERVISOR','DISTRICT_SUPERVISOR','TEAM_SUPERVISOR', 'REGISTRAR', 'HEALTH_FACILITY_WORKER')
+                   'PROVINCIAL_SUPERVISOR','DISTRICT_SUPERVISOR','TEAM_SUPERVISOR', 'REGISTRAR', 'HEALTH_FACILITY_WORKER',
+                   'LOCAL_MONITOR')
 
     UNION ALL
     /* SYNCED -- household */
